@@ -10,7 +10,6 @@ class KnowledgePage(ttk.Frame):
         super().__init__(master, style="Page.TFrame")
         self.app = app
         self.theme = self.app.theme
-        self._filtered = list(self.app.content.tips)
         self._build()
         self.refresh_list()
 
@@ -77,7 +76,6 @@ class KnowledgePage(ttk.Frame):
         if cat != "Все категории":
             tips = [t for t in tips if t.cat == cat]
 
-        self._filtered = tips
         self.tree.delete(*self.tree.get_children())
         for tip in tips:
             self.tree.insert("", "end", iid=tip.id, values=(tip.cat, tip.title, tip.sched))
