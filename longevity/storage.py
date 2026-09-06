@@ -75,14 +75,16 @@ class Storage:
 
     # -- отметки выполнения --------------------------------------------
     def toggle_completion(self, date: str, item_id: str) -> bool:
+        # Решение принимается одним изменяющим запросом (DELETE), а не парой
+        # «SELECT — потом INSERT/DELETE»: SELECT не открывает транзакцию, и в
+        # окне между чтением и записью два вызова могли бы оба решить, что
+        # записи нет, и оба попытаться её вставить. DELETE — DML-запрос, он
+        # сразу стартует транзакцию, поэтому check-then-act исчезает.
         with self._conn:
-            existing = self._conn.execute(
-                "SELECT 1 FROM completions WHERE date = ? AND item_id = ?", (date, item_id)
-            ).fetchone()
-            if existing:
-                self._conn.execute(
-                    "DELETE FROM completions WHERE date = ? AND item_id = ?", (date, item_id)
-                )
+            cursor = self._conn.execute(
+                "DELETE FROM completions WHERE date = ? AND item_id = ?", (date, item_id)
+            )
+            if cursor.rowcount:
                 return False
             self._conn.execute(
                 "INSERT INTO completions (date, item_id, done_at) VALUES (?, ?, ?)",
@@ -150,7 +152,12 @@ class Storage:
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (OSError, ValueError):
+                # ValueError покрывает и json.JSONDecodeError (битый синтаксис),
+                # и UnicodeDecodeError (оборванная многобайтовая UTF-8
+                # последовательность) — оба подкласса ValueError, а не OSError.
+                # Именно усечённый файл — типичный след неатомарной записи
+                # старой версией, ради которого миграция существует.
                 continue
             if not isinstance(data, dict):
                 continue

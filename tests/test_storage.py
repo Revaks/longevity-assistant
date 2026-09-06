@@ -53,6 +53,16 @@ def test_toggle_completion_flips_state(store):
     assert store.completions_on("2026-09-06") == set()
 
 
+def test_toggle_completion_round_trip_leaves_no_duplicates(store):
+    first = store.toggle_completion("2026-09-06", "mind_greens")
+    second = store.toggle_completion("2026-09-06", "mind_greens")
+
+    assert first is True
+    assert second is False
+    assert store.completions_on("2026-09-06") == set()
+    assert store.completion_counts("2026-09-01", "2026-09-30") == {}
+
+
 def test_completion_counts_over_a_week(store):
     for day in ("2026-08-31", "2026-09-01", "2026-09-02"):
         store.toggle_completion(day, "mind_greens")
@@ -132,6 +142,16 @@ def test_migration_ignores_broken_file(tmp_path):
 
     assert store.migrate_notes_json([legacy]) == 0
     assert legacy.exists(), "битый файл не трогаем"
+    store.close()
+
+
+def test_migration_ignores_file_with_broken_utf8(tmp_path):
+    legacy = tmp_path / "notes.json"
+    legacy.write_bytes(b'{"2026-09-06": "\xd0\xb7\xd0')
+    store = Storage(tmp_path / "data.db")
+
+    assert store.migrate_notes_json([legacy]) == 0
+    assert legacy.exists(), "файл с оборванной UTF-8 последовательностью не трогаем"
     store.close()
 
 
