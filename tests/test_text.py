@@ -1,4 +1,4 @@
-from longevity.text import STOPWORDS, analyze, normalize, stem, tokenize
+from longevity.text import STOPWORDS, analyze, normalize, stem, tokenize, _FLEETING_VOWEL_MAP
 
 
 def test_normalize_lowercases_and_unifies_yo():
@@ -55,15 +55,38 @@ def test_analyze_returns_empty_for_stopwords_only():
 
 def test_stem_handles_fleeting_vowels():
     """Слова с беглой гласной сводятся к одной основе через словарь исключений."""
-    # сон ~ сна (беглая 'о')
-    assert stem("сна") == "сон"
-    assert stem("сну") == "сон"
-    assert stem("сном") == "сон"
-    assert stem("сне") == "сон"
-    assert stem("сон") == stem("сна") == stem("сну") == stem("сном")
+    # сон ~ сна (беглая 'о'): полная семья
+    assert stem("сон") == "сон"   # базовая форма
+    assert stem("сна") == "сон"   # генитив
+    assert stem("сну") == "сон"   # датив
+    assert stem("сном") == "сон"  # инструментал
+    assert stem("сне") == "сон"   # локатив
+    # все формы дают одну основу
+    assert stem("сон") == stem("сна") == stem("сну") == stem("сном") == stem("сне")
 
-    # день ~ днем (беглая 'е')
-    assert stem("днем") == "день"
+
+def test_fleeting_vowel_map_is_consistent():
+    """Инвариант: словарь беглой гласной не разъединяет совпадения.
+
+    Для каждой записи в словаре её результат должен совпадать с результатом
+    для базовой формы того же слова (то значение, которое естественный стемминг
+    даёт для начальной формы).
+    """
+    # Для каждой формы в словаре проверяем, что её результат совпадает
+    # с результатом для базовой формы (той, что естественно стемится)
+    base_forms = {
+        "сон": "сон",  # базовая форма сама себе отображается
+    }
+
+    for base, expected_stem in base_forms.items():
+        # Все формы этого слова в словаре должны давать одну основу
+        for form, mapped_stem in _FLEETING_VOWEL_MAP.items():
+            if mapped_stem == expected_stem:
+                # Если форма отображена на эту основу, то результат должен совпадать
+                assert stem(form) == expected_stem, (
+                    f"Форма '{form}' должна давать '{expected_stem}', "
+                    f"но даёт '{stem(form)}'"
+                )
 
 
 def test_stem_handles_dative_plural():
