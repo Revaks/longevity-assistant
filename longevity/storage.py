@@ -7,6 +7,18 @@ from pathlib import Path
 
 SCHEMA_VERSION = "1"
 
+#: Ключ meta, в который записывается путь к резервной копии notes.json.
+#: Нужен человеку, откатившемуся на старую версию: README новой версии
+#: откат уберёт, а база останется на месте.
+NOTES_BACKUP_KEY = "notes_json_backup"
+
+#: Начало пометки, которой отделяется перенесённый текст от текста в базе.
+MERGE_MARK = "--- перенесено из notes.json"
+
+#: Сколько запасных имён вида notes.json.migrated.2 перебирать, прежде чем
+#: сдаться. Столько откатов подряд не бывает, а бесконечный цикл — бывает.
+_MAX_BACKUP_ATTEMPTS = 1000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS notes (
     date TEXT PRIMARY KEY,
@@ -36,15 +48,45 @@ CREATE TABLE IF NOT EXISTS embeddings (
 """
 
 
+class StorageError(Exception):
+    """С этой базой работать нельзя — например, её создала более новая версия."""
+
+
 class Storage:
     def __init__(self, db_path: Path):
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
-        with self._conn:
-            self._conn.executescript(SCHEMA)
-            self._conn.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-                (SCHEMA_VERSION,),
+        #: Сообщения о том, что при миграции пошло не так, но не настолько,
+        #: чтобы не запускаться. Вызывающий код показывает их пользователю.
+        self.migration_warnings: list[str] = []
+        try:
+            with self._conn:
+                self._conn.executescript(SCHEMA)
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
+                    (SCHEMA_VERSION,),
+                )
+            self._check_schema_version(db_path)
+        except BaseException:
+            self._conn.close()
+            raise
+
+    def _check_schema_version(self, db_path: Path) -> None:
+        """Отказ работать с базой из будущего: недостающих колонок не выдумать."""
+        found = self.get_meta("schema_version")
+        try:
+            found_version = int(found)
+        except (TypeError, ValueError):
+            raise StorageError(
+                f"База данных {db_path} помечена неизвестной версией схемы "
+                f"({found!r}). Возможно, файл повреждён."
+            ) from None
+        if found_version > int(SCHEMA_VERSION):
+            raise StorageError(
+                f"База данных {db_path} создана более новой версией приложения "
+                f"(схема {found_version}, эта версия знает {SCHEMA_VERSION}). "
+                "Обновите «Ассистент долголетия» — иначе часть ваших данных "
+                "будет потеряна."
             )
 
     def close(self) -> None:
@@ -123,6 +165,14 @@ class Storage:
         row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
 
+    def set_meta(self, key: str, value: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
     # -- кэш векторов ---------------------------------------------------
     def get_vectors(self, model: str, content_hash: str) -> dict[str, list[float]]:
         rows = self._conn.execute(
@@ -146,7 +196,16 @@ class Storage:
 
     # -- миграция -------------------------------------------------------
     def migrate_notes_json(self, candidates: list[Path]) -> int:
+        """Переносит заметки из старых notes.json в базу.
+
+        Возвращает число заметок, действительно записанных в базу (а не число
+        попыток). Неудачи переименования исходника не мешают запуску — данные
+        к этому моменту уже в базе — и складываются в self.migration_warnings,
+        чтобы интерфейс мог о них сказать.
+        """
+        self.migration_warnings = []
         moved = 0
+        today = datetime.now().date().isoformat()
         for path in candidates:
             if not path.is_file():
                 continue
@@ -161,15 +220,83 @@ class Storage:
                 continue
             if not isinstance(data, dict):
                 continue
-            with self._conn:
-                for date, text in data.items():
-                    if not isinstance(text, str) or not text.strip():
-                        continue
-                    self._conn.execute(
-                        "INSERT INTO notes (date, text) VALUES (?, ?) "
-                        "ON CONFLICT(date) DO NOTHING",
-                        (date, text.strip()),
-                    )
-                    moved += 1
-            path.rename(path.with_suffix(path.suffix + ".migrated"))
+            moved += self._merge_notes(data, today)
+            self._backup_migrated_file(path)
         return moved
+
+    def _merge_notes(self, data: dict, today: str) -> int:
+        """Сливает заметки из файла с тем, что уже лежит в базе."""
+        written = 0
+        with self._conn:
+            for date, text in data.items():
+                if not isinstance(text, str):
+                    # Старый файл мог быть отредактирован руками: {"2026-09-01": 123}.
+                    continue
+                text = text.strip()
+                if not text:
+                    continue
+                row = self._conn.execute(
+                    "SELECT text FROM notes WHERE date = ?", (date,)
+                ).fetchone()
+                merged = _merge_note(row["text"] if row else "", text, today)
+                if merged is None:
+                    continue
+                self._conn.execute(
+                    "INSERT INTO notes (date, text) VALUES (?, ?) "
+                    "ON CONFLICT(date) DO UPDATE SET text = excluded.text",
+                    (date, merged),
+                )
+                written += 1
+        return written
+
+    def _backup_migrated_file(self, path: Path) -> None:
+        """Убирает перенесённый файл, не затирая прошлые резервные копии."""
+        backup = _free_backup_path(path)
+        if backup is None:
+            self.migration_warnings.append(
+                f"Не удалось подобрать имя для резервной копии {path}: "
+                "слишком много прежних копий рядом. Файл оставлен как есть."
+            )
+            return
+        try:
+            # replace, а не rename: rename на Windows падает, если цель занята,
+            # и это ронял старт при повторном обновлении. Имя при этом уже
+            # свободно, так что перезаписи чужого бэкапа не будет.
+            path.replace(backup)
+        except OSError as exc:
+            self.migration_warnings.append(
+                f"Заметки из {path} перенесены в базу, но сам файл переименовать "
+                f"не удалось ({exc}). Уберите или переименуйте его вручную, иначе "
+                "при следующем запуске перенос повторится."
+            )
+            return
+        self.set_meta(NOTES_BACKUP_KEY, str(backup))
+
+
+def _merge_note(existing: str, incoming: str, today: str) -> str | None:
+    """Объединённый текст заметки или None, если менять в базе нечего.
+
+    Политика «база всегда старше файла» неверна для отката: там свежее как раз
+    файл. Поэтому при расхождении не выбрасываем ни одну из версий, а
+    показываем обе — решает пользователь.
+    """
+    if not existing:
+        return incoming
+    if incoming == existing:
+        return None
+    if incoming in existing:
+        # Этот текст уже переносили: второй перенос не должен ничего дублировать.
+        return None
+    return f"{existing}\n\n{MERGE_MARK} {today} ---\n{incoming}"
+
+
+def _free_backup_path(path: Path) -> Path | None:
+    """Свободное имя для резервной копии: notes.json.migrated, потом .2, .3…"""
+    backup = path.with_name(path.name + ".migrated")
+    if not backup.exists():
+        return backup
+    for n in range(2, _MAX_BACKUP_ATTEMPTS + 1):
+        numbered = path.with_name(f"{path.name}.migrated.{n}")
+        if not numbered.exists():
+            return numbered
+    return None
