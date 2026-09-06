@@ -104,19 +104,50 @@ class NutritionPage(ttk.Frame):
         )
 
         def work():
+            """Выполняется в фоновом потоке — не должна бросать исключений.
+
+            Если бросит, доставки не случится и кнопка останется
+            заблокированной навсегда. Поэтому результат считается здесь
+            целиком (включая текст ошибки), а планирование доставки вынесено
+            в _deliver и стоит один раз, вне блока перехвата: иначе неудачное
+            after() из ветки except пыталось бы позвать after() снова.
+            """
             try:
                 resp = ask_ollama(model, prompt, timeout=240)
                 menu = self._parse_menu(resp)
                 if menu:
-                    self.after(0, lambda: self._menu_done(menu, "Меню сгенерировано Ollama."))
+                    result = (menu, "Меню сгенерировано Ollama.")
                 else:
-                    self.after(0, lambda: self._menu_done(
-                        self.app.content.menu, "Ollama вернула не JSON — показано базовое меню."))
+                    result = (self.app.content.menu,
+                              "Ollama вернула не JSON — показано базовое меню.")
             except Exception as exc:
-                self.after(0, lambda: self._menu_done(
-                    self.app.content.menu, f"Ошибка Ollama ({exc}) — показано базовое меню."))
+                result = (self.app.content.menu,
+                          f"Ошибка Ollama ({exc}) — показано базовое меню.")
+            self._deliver(result)
 
-        threading.Thread(target=work, daemon=True).start()
+        # Старт потока — последнее, что может упасть до того, как за
+        # разблокировку кнопки начнёт отвечать _menu_done.
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            self.gen_btn.config(state="normal")
+            self.status_var.set("Не удалось запустить генерацию меню.")
+            raise
+
+    def _deliver(self, result) -> None:
+        """Передать готовое меню в главный поток. Выполняется в фоновом.
+
+        Окно могут закрыть, пока модель думает — генерация меню идёт до
+        четырёх минут, так что это самый вероятный момент закрытия. after()
+        из чужого потока после destroy() бросает RuntimeError('main thread is
+        not in main loop'), а при живом цикле и уничтоженном окне — TclError.
+        Оба гасим: разблокировать уже нечего. Перехват узкий — прочие ошибки
+        обязаны долететь до threading.excepthook.
+        """
+        try:
+            self.after(0, lambda: self._menu_done(*result))
+        except (RuntimeError, tk.TclError):
+            pass
 
     @staticmethod
     def _parse_menu(text: str):
@@ -138,6 +169,13 @@ class NutritionPage(ttk.Frame):
             return None
 
     def _menu_done(self, menu, status):
-        self._fill_menu(menu)
-        self.status_var.set(status)
-        self.gen_btn.config(state="normal")
+        # Отрисовка меню — та самая операция, которая может упасть (модель
+        # вернула строку там, где ждали текст, дерево уже уничтожено и т.п.).
+        # Если она упадёт, разблокировка всё равно обязана произойти, иначе
+        # кнопка останется недоступной до перезапуска приложения — поэтому
+        # finally, а не следующая строка после потенциально падающего вызова.
+        try:
+            self._fill_menu(menu)
+            self.status_var.set(status)
+        finally:
+            self.gen_btn.config(state="normal")

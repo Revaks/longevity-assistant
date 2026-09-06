@@ -288,3 +288,56 @@ def test_closing_window_during_poll_does_not_crash_background_thread(tk, monkeyp
         threading.excepthook = old_hook
 
     assert errors == [], f"фоновый поток бросил исключение при закрытии окна: {errors}"
+
+
+# -- Требование финального ревью: неудачная доставка не оставляет busy поднятым --
+
+def test_failed_delivery_clears_busy_flag(tk, tmp_path):
+    """Иначе кнопка «Обновить» блокируется навсегда — и сразу на обеих вкладках.
+
+    refresh() выходит сразу, пока busy поднят, а снимает его только _apply,
+    который выполняется в главном потоке. Если запланировать _apply не
+    удалось, снять busy может только сама доставка.
+    """
+    from longevity.storage import Storage
+    from ui.widgets import ModelStore
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    store = ModelStore(root, storage)
+    store.busy = True
+    store.status = "Опрашиваю Ollama..."
+    storage.close()
+    root.destroy()
+
+    thread = threading.Thread(target=lambda: store._deliver([]))
+    thread.start()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive(), "фоновый поток так и не завершился"
+    assert store.busy is False, "busy остался поднятым — «Обновить» больше не разблокируется"
+    assert store.status == ""
+
+
+def test_delivery_does_not_swallow_unexpected_errors(env, monkeypatch):
+    """Перехват узкий: гаснут только ошибки закрытого окна, прочие — нет.
+
+    Широкий `except Exception` прятал бы любую поломку доставки, включая
+    опечатку в самом _apply, и наружу это выглядело бы как вечное
+    «Опрашиваю Ollama...».
+    """
+    from types import SimpleNamespace
+
+    _, _, _, store = env
+
+    class Unexpected(Exception):
+        pass
+
+    def boom(*_args, **_kwargs):
+        raise Unexpected("ошибка, не связанная с закрытым окном")
+
+    monkeypatch.setattr(store, "_root", SimpleNamespace(after=boom))
+
+    with pytest.raises(Unexpected):
+        store._deliver([])

@@ -184,9 +184,26 @@ class AssistantPage(ttk.Frame):
 
         def work():
             result = self._ollama_answer_or_fallback(model, prompt, query)
-            self.after(0, lambda: self._ollama_done(result))
+            self._deliver(result)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _deliver(self, result: str) -> None:
+        """Передать готовый ответ в главный поток. Выполняется в фоновом.
+
+        Окно могут закрыть, пока модель думает — и это самый вероятный момент
+        закрытия: ответа ждут десятки секунд. after(), вызванный из чужого
+        потока после destroy(), около секунды пытается достучаться до
+        исчезнувшего цикла событий и бросает RuntimeError('main thread is not
+        in main loop'), а до этого — TclError, если цикл ещё жив, но окно уже
+        уничтожено. Оба гасим: интерфейса, который надо разблокировать, к
+        этому моменту уже нет. Перехват узкий — любая другая ошибка обязана
+        долететь до threading.excepthook, а не пропасть.
+        """
+        try:
+            self.after(0, lambda: self._ollama_done(result))
+        except (RuntimeError, tk.TclError):
+            pass
 
     def _ollama_answer_or_fallback(self, model: str, prompt: str, query: str) -> str:
         """Выполняется в фоновом потоке — не должна бросать исключений.

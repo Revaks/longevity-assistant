@@ -1,30 +1,38 @@
+import threading
+from types import SimpleNamespace
+
 import pytest
 
 
-@pytest.fixture
-def page(tk, tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+def _make_page(root):
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from ui.assistant_page import AssistantPage
     from ui.theme import Theme
     from ui.widgets import ModelStore
 
-    root = tk.Tk()
-    root.withdraw()
-
-    class FakeApp:
-        content = load_content()
-        index = SearchIndex(content)
-        theme = Theme(root)   # настоящая тема: страница берёт из неё шрифты при построении
-        storage = None
+    content = load_content()
+    app = SimpleNamespace(
+        content=content,
+        index=SearchIndex(content),
+        theme=Theme(root),   # настоящая тема: страница берёт из неё шрифты при построении
+        storage=None,
         # Общий store как в LongevityApp, но никто не вызывает refresh() —
         # эти тесты проверяют блокировку ввода, а не список моделей, и не
         # должны тянуть сеть.
-        model_store = ModelStore(root, None)
+        model_store=ModelStore(root, None),
+    )
+    return AssistantPage(root, app)
 
-    p = AssistantPage(root, FakeApp())
-    yield p
+
+@pytest.fixture
+def page(tk, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    root = tk.Tk()
+    root.withdraw()
+
+    yield _make_page(root)
     root.destroy()
 
 
@@ -130,6 +138,38 @@ def test_worker_returns_safe_text_when_ollama_and_local_fallback_both_fail(page,
     assert str(page.entry["state"]) == "normal"
     for button in page.quick_buttons:
         assert str(button["state"]) == "normal"
+
+
+def test_closing_window_during_answer_does_not_crash_background_thread(tk, tmp_path, monkeypatch):
+    """Окно закрыли, пока модель думает — самый вероятный момент закрытия.
+
+    Ответа ждут десятки секунд. after(), вызванный из фонового потока после
+    того как окно уничтожено, бросает RuntimeError('main thread is not in
+    main loop') — до задачи 10 это чинили только в ui/widgets.py, а здесь
+    воспроизводилось живьём. Поток обязан проглотить ошибку сам, иначе она
+    долетает до threading.excepthook.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    root = tk.Tk()
+    root.withdraw()
+    page = _make_page(root)
+    root.destroy()  # пользователь закрыл окно раньше, чем ответила модель
+
+    errors = []
+
+    def work():
+        try:
+            page._deliver("готовый ответ модели")
+        except BaseException as exc:  # noqa: BLE001 — ловим ради проверки
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive(), "фоновый поток так и не завершился"
+    assert errors == [], f"доставка ответа в закрытое окно бросила исключение: {errors}"
 
 
 def test_unlock_if_prompt_build_fails_before_thread_starts(page, monkeypatch):

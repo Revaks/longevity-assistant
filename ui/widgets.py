@@ -91,11 +91,23 @@ class ModelStore:
         self._thread.start()
 
     def _deliver(self, models: list) -> None:
-        """Выполняется в фоновом потоке — не должна бросать исключений наружу."""
+        """Выполняется в фоновом потоке — не должна бросать исключений наружу.
+
+        Перехват узкий: после destroy() after() из чужого потока бросает
+        RuntimeError('main thread is not in main loop'), а при живом цикле и
+        уничтоженном окне — TclError. Всё остальное обязано долететь до
+        threading.excepthook, а не пропасть.
+
+        Состояние сбрасывается прямо здесь. Запланировать _apply не удалось,
+        значит busy никто не снимет — а с поднятым busy refresh() выходит
+        сразу, и кнопка «Обновить» больше никогда не разблокируется, причём
+        на обеих вкладках сразу: store у них общий.
+        """
         try:
             self._root.after(0, lambda: self._apply(models))
-        except Exception:
-            pass
+        except (RuntimeError, tk.TclError):
+            self.busy = False
+            self.status = ""
 
     def _apply(self, models: list) -> None:
         self.models = models
