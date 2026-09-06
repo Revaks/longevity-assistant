@@ -102,3 +102,30 @@ def test_fish_day_has_vegetarian_alternative():
 
     assert item["requires"] == {"diet": "omnivore"}
     assert "льняно" in item["alt"]["detail"].lower(), "омега-3 должна остаться в рационе"
+
+
+def test_every_tip_declares_age_and_rx():
+    for tip in load("tips.json"):
+        assert "age_min" in tip, f"{tip['id']} без age_min"
+        assert "rx" in tip, f"{tip['id']} без rx"
+        assert tip["age_min"] is None or isinstance(tip["age_min"], int)
+        assert isinstance(tip["rx"], bool)
+
+
+def test_age_restricted_tips():
+    tips = {t["id"]: t for t in load("tips.json")}
+
+    assert tips["pit03"]["age_min"] == 50, "белок ограничивают с 50 лет"
+    assert tips["dob14"]["age_min"] == 50, "мелатонин обсуждают после 50"
+    assert tips["zh06"]["age_min"] is None, "спать вовремя полезно в любом возрасте"
+
+
+def test_prescription_only_tips_are_flagged():
+    tips = {t["id"]: t for t in load("tips.json")}
+    expected_rx = {"proc04", "proc05", "proc06", "dob13"}
+
+    for tip_id in expected_rx:
+        assert tips[tip_id]["rx"] is True, f"{tip_id} применяется только по назначению врача"
+
+    flagged = {t["id"] for t in tips.values() if t["rx"]}
+    assert flagged == expected_rx
