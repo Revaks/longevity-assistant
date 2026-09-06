@@ -46,3 +46,59 @@ def test_mind_groups_and_menu():
     assert len(mind["menu"]) == 7
     assert mind["menu"][0]["day"] == "Понедельник"
     assert set(mind["menu"][0]) == {"day", "breakfast", "lunch", "dinner", "snack"}
+
+
+def test_schedule_has_stable_ids():
+    schedule = load("schedule.json")
+
+    assert len(schedule) == 22
+    ids = [item["id"] for item in schedule]
+    assert len(set(ids)) == 22, "id пунктов расписания должны быть уникальны"
+    assert all(item_id.strip() for item_id in ids), "пустой id недопустим"
+
+
+def test_schedule_anchors_replace_time_parsing():
+    schedule = {item["id"]: item for item in load("schedule.json")}
+
+    assert schedule["sleep_wake"]["anchor"] == "clock"
+    assert schedule["sleep_wake"]["time"] == "06:30"
+
+    assert schedule["weekly_review"]["anchor"] == "morning"
+    assert schedule["weekly_review"]["time"] is None
+
+    assert schedule["mind_greens"]["anchor"] == "allday"
+    assert schedule["mind_greens"]["time"] is None
+
+
+def test_clock_items_have_time_and_others_do_not():
+    for item in load("schedule.json"):
+        if item["anchor"] == "clock":
+            assert item["time"], f"{item['id']}: clock-пункт без времени"
+        else:
+            assert item["time"] is None, f"{item['id']}: время у не-clock пункта"
+
+
+def test_schedule_links_to_tips():
+    tip_ids = {t["id"] for t in load("tips.json")}
+
+    for item in load("schedule.json"):
+        assert item["tips"], f"{item['id']} не сослался ни на один совет"
+        for ref in item["tips"]:
+            assert ref in tip_ids, f"{item['id']} ссылается на несуществующий {ref}"
+
+
+def test_strength_training_has_alternative_without_gym():
+    schedule = {item["id"]: item for item in load("schedule.json")}
+    item = schedule["train_strength"]
+
+    assert item["requires"] == {"gym": True}
+    assert item["alt"]["title"]
+    assert item["alt"]["detail"]
+
+
+def test_fish_day_has_vegetarian_alternative():
+    schedule = {item["id"]: item for item in load("schedule.json")}
+    item = schedule["mind_fish"]
+
+    assert item["requires"] == {"diet": "omnivore"}
+    assert "льняно" in item["alt"]["detail"].lower(), "омега-3 должна остаться в рационе"
