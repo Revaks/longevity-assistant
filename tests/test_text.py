@@ -37,7 +37,7 @@ def test_stem_does_not_over_truncate():
 def test_analyze_drops_stopwords():
     result = analyze("какие добавки нужно принимать")
 
-    assert "добавк" in " ".join(result)
+    assert "добавк" in result  # проверка членства в списке, а не подстроки
     for word in ("какие", "нужно", "принимать"):
         assert stem(word) not in result
 
@@ -51,6 +51,27 @@ def test_analyze_is_the_same_for_query_and_document():
 
 def test_analyze_returns_empty_for_stopwords_only():
     assert analyze("что как для") == []
+
+
+def test_stem_handles_fleeting_vowels():
+    """Слова с беглой гласной сводятся к одной основе через словарь исключений."""
+    # сон ~ сна (беглая 'о')
+    assert stem("сна") == "сон"
+    assert stem("сну") == "сон"
+    assert stem("сном") == "сон"
+    assert stem("сне") == "сон"
+    assert stem("сон") == stem("сна") == stem("сну") == stem("сном")
+
+    # день ~ днем (беглая 'е')
+    assert stem("днем") == "день"
+
+
+def test_stem_handles_dative_plural():
+    """Дательный падеж множественного числа (-ам, -ям) отсекается правильно."""
+    assert stem("тренировкам") == stem("тренировке")
+    assert stem("орехам") == stem("ореха")
+    assert stem("добавкам") == stem("добавка")
+    assert stem("овощам") == stem("овоща")
 
 
 def test_stopwords_are_frozen():
