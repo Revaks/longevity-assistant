@@ -125,7 +125,7 @@ def test_migrates_notes_json_and_renames_it(tmp_path):
     store.close()
 
 
-def test_migration_is_idempotent(tmp_path):
+def test_migrated_file_is_renamed_and_not_reread(tmp_path):
     legacy = tmp_path / "notes.json"
     legacy.write_text(json.dumps({"2026-09-06": "заметка"}), encoding="utf-8")
     store = Storage(tmp_path / "data.db")
