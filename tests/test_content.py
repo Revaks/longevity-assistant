@@ -114,6 +114,88 @@ def test_rejects_unknown_anchor():
                       mind={"good": [], "limit": [], "menu": []}, meta=_meta())
 
 
+# -- отсутствующие и неверного типа поля -------------------------------
+def _tip(**overrides):
+    tip = {"id": "a1", "cat": "Питание", "title": "т", "text": "т", "sched": "т",
+           "source": "т", "tags": "т", "age_min": None, "rx": False}
+    tip.update(overrides)
+    return tip
+
+
+def _build(tips=(), schedule=(), meta=None):
+    return Content.build(tips=list(tips), schedule=list(schedule), synonyms={},
+                         mind={"good": [], "limit": [], "menu": []},
+                         meta=meta if meta is not None else _meta())
+
+
+def test_missing_tip_field_names_the_tip_and_the_field():
+    broken = _tip()
+    del broken["source"]
+
+    with pytest.raises(ContentError) as exc:
+        _build(tips=[broken])
+
+    assert "a1" in str(exc.value), "в сообщении должен быть совет"
+    assert "source" in str(exc.value), "в сообщении должно быть поле"
+
+
+def test_tip_without_id_is_named_by_position():
+    broken = _tip()
+    del broken["id"]
+
+    with pytest.raises(ContentError, match="№1"):
+        _build(tips=[broken])
+
+
+def test_tip_field_of_wrong_type_is_rejected():
+    with pytest.raises(ContentError, match="title"):
+        _build(tips=[_tip(title=42)])
+
+
+def test_rx_must_be_boolean_not_string():
+    with pytest.raises(ContentError, match="rx"):
+        _build(tips=[_tip(rx="да")])
+
+
+def test_age_min_does_not_accept_boolean():
+    """True — это int в Python, но не возраст."""
+    with pytest.raises(ContentError, match="age_min"):
+        _build(tips=[_tip(age_min=True)])
+
+
+def test_missing_schedule_field_names_the_item_and_the_field():
+    item = {"id": "s1", "title": "т", "detail": "т", "cat": "Питание",
+            "days": [0], "anchor": "allday", "tips": []}
+
+    with pytest.raises(ContentError) as exc:
+        _build(schedule=[item])
+
+    assert "s1" in str(exc.value)
+    assert "time" in str(exc.value)
+
+
+def test_missing_meta_key_is_reported_as_content_error():
+    meta = _meta()
+    del meta["disclaimer"]
+
+    with pytest.raises(ContentError, match="disclaimer"):
+        _build(meta=meta)
+
+
+def test_tips_file_must_be_a_list():
+    with pytest.raises(ContentError, match="tips.json"):
+        Content.build(tips={"a1": {}}, schedule=[], synonyms={},
+                      mind={"good": [], "limit": [], "menu": []}, meta=_meta())
+
+
+def test_mind_group_with_missing_field_is_reported():
+    with pytest.raises(ContentError, match="amount"):
+        Content.build(tips=[], schedule=[], synonyms={},
+                      mind={"good": [{"name": "Зелень", "note": "т"}],
+                            "limit": [], "menu": []},
+                      meta=_meta())
+
+
 def _meta():
     return {
         "app_title": "т", "app_subtitle": "т", "disclaimer": "т",

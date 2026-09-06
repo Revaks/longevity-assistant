@@ -10,6 +10,8 @@
 import datetime as dt
 import json
 import re
+import sqlite3
+import sys
 import threading
 import tkinter as tk
 import urllib.request
@@ -17,24 +19,23 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from longevity import paths
-from longevity.content import MenuDay, load_content
+from longevity.content import Content, ContentError, MenuDay, load_content
 from longevity.schedule import display_time, get_today_plan
-from longevity.storage import Storage
+from longevity.storage import Storage, StorageError
 
-CONTENT = load_content()
 OLLAMA_URL = "http://localhost:11434"
+
+#: Данные книги. Заполняются в main() — на уровне модуля их грузить нельзя:
+#: до создания окна показать ошибку нечем, а под pythonw и в macOS-бандле
+#: консоли нет вообще, и приложение просто молча не открывалось бы.
+CONTENT: Content = None
 
 _STORAGE: Storage | None = None
 
 
 def get_storage() -> Storage:
-    global _STORAGE
     if _STORAGE is None:
-        _STORAGE = Storage(paths.db_path())
-        _STORAGE.migrate_notes_json([
-            Path(__file__).resolve().parent / "notes.json",
-            paths.data_dir() / "notes.json",
-        ])
+        raise RuntimeError("Хранилище не открыто: main() не выполнялся")
     return _STORAGE
 
 
@@ -829,6 +830,15 @@ class LongevityApp(tk.Tk):
         self._build_header()
         self._build_pages()
         self._build_statusbar()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        """Закрыть соединение с базой — иначе оно висит до конца процесса."""
+        try:
+            get_storage().close()
+        except Exception:
+            pass
+        self.destroy()
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -917,10 +927,62 @@ class LongevityApp(tk.Tk):
                 btn.config(bg=SIDEBAR_BG)
 
 
-def main():
-    app = LongevityApp()
-    app.mainloop()
+def _show_start_error(title: str, reason: str) -> None:
+    """Сообщить об ошибке старта окном, а не трассировкой в несуществующую консоль."""
+    text = f"{title}\n\nПричина: {reason}"
+    print(text, file=sys.stderr)
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Ассистент долголетия", text)
+        root.destroy()
+    except tk.TclError:
+        # Tk не поднялся — остаётся только stderr, он уже написан выше.
+        pass
+
+
+def main() -> int:
+    """Точка входа: сначала данные и база, потом окно."""
+    global CONTENT, _STORAGE
+
+    try:
+        CONTENT = load_content()
+    except ContentError as exc:
+        _show_start_error(
+            "Не удалось загрузить данные приложения — они противоречивы "
+            "или повреждены. Переустановите «Ассистент долголетия».", str(exc))
+        return 1
+
+    try:
+        _STORAGE = Storage(paths.db_path())
+        _STORAGE.migrate_notes_json([Path(__file__).resolve().parent / "notes.json"])
+    except StorageError as exc:
+        _show_start_error("Не удалось открыть базу данных.", str(exc))
+        return 1
+    except (OSError, sqlite3.Error) as exc:
+        _show_start_error(
+            f"Не удалось открыть базу данных {paths.db_path()}.", str(exc))
+        return 1
+
+    try:
+        app = LongevityApp()
+    except tk.TclError as exc:
+        _show_start_error(
+            "Не удалось создать окно. Проверьте, что установлен Tk "
+            "(подробности — в README).", str(exc))
+        _STORAGE.close()
+        return 1
+
+    if _STORAGE.migration_warnings:
+        warnings = "\n\n".join(_STORAGE.migration_warnings)
+        app.after(200, lambda: messagebox.showwarning("Перенос старых заметок", warnings))
+
+    try:
+        app.mainloop()
+    finally:
+        _STORAGE.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
