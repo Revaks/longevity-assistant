@@ -9,17 +9,33 @@
 
 import datetime as dt
 import json
-import os
 import re
 import threading
 import tkinter as tk
 import urllib.request
-from tkinter import ttk
+from pathlib import Path
+from tkinter import messagebox, ttk
 
-import knowledge_base as kb
+from longevity import paths
+from longevity.content import MenuDay, load_content
+from longevity.storage import Storage
 
-NOTES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notes.json")
+CONTENT = load_content()
 OLLAMA_URL = "http://localhost:11434"
+
+_STORAGE: Storage | None = None
+
+
+def get_storage() -> Storage:
+    global _STORAGE
+    if _STORAGE is None:
+        _STORAGE = Storage(paths.db_path())
+        _STORAGE.migrate_notes_json([
+            Path(__file__).resolve().parent / "notes.json",
+            paths.data_dir() / "notes.json",
+        ])
+    return _STORAGE
+
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAYS_FULL = ["Понедельник", "Вторник", "Среда", "Четверг",
@@ -61,8 +77,8 @@ def expand_query(query: str) -> list:
         if t in STOPWORDS:
             continue
         expanded.append(t)
-        if t in kb.SYNONYMS:
-            expanded.extend(kb.SYNONYMS[t].split())
+        if t in CONTENT.synonyms:
+            expanded.extend(CONTENT.synonyms[t].split())
     return expanded
 
 
@@ -87,11 +103,11 @@ def _count_hits(query_tokens, field: str, weight: float) -> float:
     return score
 
 
-def score_tip(query_tokens: list, tip: dict) -> float:
-    title = normalize(tip["title"])
-    tags = normalize(tip.get("tags", ""))
-    text = normalize(tip["text"])
-    cat = normalize(tip["cat"])
+def score_tip(query_tokens: list, tip) -> float:
+    title = normalize(tip.title)
+    tags = normalize(tip.tags)
+    text = normalize(tip.text)
+    cat = normalize(tip.cat)
     score = 0.0
     score += _count_hits(query_tokens, title, 3.0)
     score += _count_hits(query_tokens, tags, 2.0)
@@ -105,7 +121,7 @@ def score_tip(query_tokens: list, tip: dict) -> float:
 def search_tips(query: str, limit: int = 5):
     tokens = expand_query(query)
     scored = []
-    for tip in kb.TIPS:
+    for tip in CONTENT.tips:
         s = score_tip(tokens, tip)
         if s > 0:
             scored.append((s, tip))
@@ -116,8 +132,17 @@ def search_tips(query: str, limit: int = 5):
 def get_today_plan(day: dt.date):
     """Возвращает пункты расписания на конкретную дату."""
     wd = day.weekday()
-    items = [s for s in kb.SCHEDULE if wd in s["days"]]
-    return sorted(items, key=lambda s: _time_key(s["time"]))
+    items = [s for s in CONTENT.schedule if wd in s.days]
+    return sorted(items, key=lambda s: _time_key(display_time(s)))
+
+
+def display_time(item) -> str:
+    """Текст времени для пункта расписания: якорь заменил старую строку 'time'."""
+    if item.anchor == "clock":
+        return item.time
+    if item.anchor == "morning":
+        return "утро"
+    return "весь день"
 
 
 def _time_key(t: str):
@@ -159,24 +184,6 @@ def ask_ollama(model: str, prompt: str, timeout: int = 180) -> str:
     return data.get("response", "").strip()
 
 
-def load_notes() -> dict:
-    """Заметки календаря: { 'YYYY-MM-DD': 'текст' }."""
-    try:
-        with open(NOTES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def save_notes(notes: dict):
-    try:
-        with open(NOTES_FILE, "w", encoding="utf-8") as f:
-            json.dump(notes, f, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        print("Не удалось сохранить заметки:", exc)
-
-
 # ----------------------------------------------------------------------
 # Страница «Календарь»
 # ----------------------------------------------------------------------
@@ -184,7 +191,7 @@ class CalendarPage(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
-        self.notes = load_notes()
+        self.storage = get_storage()
         self.week_start = self._monday(dt.date.today())
         self.selected_day = dt.date.today()
         self._build()
@@ -210,7 +217,7 @@ class CalendarPage(ttk.Frame):
 
         legend = ttk.Frame(nav, style="Page.TFrame")
         legend.pack(side="right")
-        for cat, color in kb.CAT_COLORS.items():
+        for cat, color in CONTENT.cat_colors.items():
             tk.Label(legend, text="●", fg=color, bg=BG).pack(side="left", padx=(8, 1))
             tk.Label(legend, text=cat, bg=BG, fg=MUTED).pack(side="left")
 
@@ -283,10 +290,15 @@ class CalendarPage(ttk.Frame):
             text=f"{self.week_start.day:02d}.{self.week_start.month:02d} – "
                  f"{sunday.day:02d}.{sunday.month:02d}.{sunday.year}")
 
+        week_notes = self.storage.notes_in_range(
+            self.week_start.isoformat(),
+            (self.week_start + dt.timedelta(days=6)).isoformat(),
+        )
+
         for i, (header, txt, _col) in enumerate(self.day_widgets):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
-            note_mark = " 📝" if self.notes.get(key) else ""
+            note_mark = " 📝" if week_notes.get(key) else ""
             header.config(text=fmt_day(day) + note_mark)
             if day == today:
                 header.config(bg="#0f766e", fg="white")
@@ -299,13 +311,13 @@ class CalendarPage(ttk.Frame):
             txt.delete("1.0", "end")
             items = get_today_plan(day)
             for it in items:
-                color = kb.CAT_COLORS.get(it["cat"], "#333333")
-                tag = f"cat{i}_{it['cat'].replace(' ', '')}"
+                color = CONTENT.cat_colors.get(it.cat, "#333333")
+                tag = f"cat{i}_{it.cat.replace(' ', '')}"
                 txt.tag_configure(tag, foreground=color,
                                   font=("Noto Sans", 9, "bold"))
-                txt.insert("end", f"{it['time']}  ", "time")
-                txt.insert("end", it["title"] + "\n", tag)
-            note = self.notes.get(key)
+                txt.insert("end", f"{display_time(it)}  ", "time")
+                txt.insert("end", it.title + "\n", tag)
+            note = week_notes.get(key)
             if note:
                 txt.insert("end", "\n📝 " + note + "\n", "note")
                 txt.tag_configure("note", foreground="#92400e",
@@ -319,22 +331,24 @@ class CalendarPage(ttk.Frame):
     # -- заметки -------------------------------------------------------
     def _load_note_to_entry(self):
         key = self.selected_day.isoformat()
-        self.note_var.set(self.notes.get(key, ""))
+        self.note_var.set(self.storage.get_note(key))
 
     def _save_note(self):
-        text = self.note_var.get().strip()
         key = self.selected_day.isoformat()
-        if text:
-            self.notes[key] = text
-        else:
-            self.notes.pop(key, None)
-        save_notes(self.notes)
+        try:
+            self.storage.set_note(key, self.note_var.get())
+        except Exception as exc:
+            messagebox.showerror("Не удалось сохранить заметку", str(exc))
+            return
         self.refresh()
 
     def _delete_note(self):
         key = self.selected_day.isoformat()
-        self.notes.pop(key, None)
-        save_notes(self.notes)
+        try:
+            self.storage.set_note(key, "")
+        except Exception as exc:
+            messagebox.showerror("Не удалось удалить заметку", str(exc))
+            return
         self.note_var.set("")
         self.refresh()
 
@@ -347,14 +361,14 @@ class CalendarPage(ttk.Frame):
                                   f"{day.day:02d}.{day.month:02d}.{day.year}\n", "h")
         self.detail.tag_configure("h", font=("Noto Sans", 11, "bold"))
         for it in items:
-            color = kb.CAT_COLORS.get(it["cat"], "#333333")
-            tag = "d_" + it["cat"].replace(" ", "")
+            color = CONTENT.cat_colors.get(it.cat, "#333333")
+            tag = "d_" + it.cat.replace(" ", "")
             self.detail.tag_configure(tag, foreground=color,
                                       font=("Noto Sans", 10, "bold"))
-            self.detail.insert("end", f"\n{it['time']} — {it['title']} ", tag)
-            self.detail.insert("end", f"({it['cat']})\n", "cat")
-            if it.get("detail"):
-                self.detail.insert("end", it["detail"] + "\n", "det")
+            self.detail.insert("end", f"\n{display_time(it)} — {it.title} ", tag)
+            self.detail.insert("end", f"({it.cat})\n", "cat")
+            if it.detail:
+                self.detail.insert("end", it.detail + "\n", "det")
         self.detail.tag_configure("cat", foreground=MUTED)
         self.detail.tag_configure("det", foreground="#374151")
         self.detail.config(state="disabled")
@@ -367,7 +381,7 @@ class KnowledgePage(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
-        self._filtered = list(kb.TIPS)
+        self._filtered = list(CONTENT.tips)
         self._build()
         self.refresh_list()
 
@@ -384,7 +398,7 @@ class KnowledgePage(ttk.Frame):
         tk.Label(top, text="Категория:", bg=BG, fg=TEXT_FG).pack(side="left", padx=(10, 0))
         self.cat_var = tk.StringVar(value="Все категории")
         combo = ttk.Combobox(top, textvariable=self.cat_var, state="readonly",
-                             values=["Все категории"] + kb.CATEGORIES, width=16)
+                             values=["Все категории"] + list(CONTENT.categories), width=16)
         combo.pack(side="left", padx=6)
         combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_list())
 
@@ -425,41 +439,41 @@ class KnowledgePage(ttk.Frame):
         q = normalize(self.search_var.get())
         cat = self.cat_var.get()
         self._filtered = []
-        for tip in kb.TIPS:
-            if cat != "Все категории" and tip["cat"] != cat:
+        for tip in CONTENT.tips:
+            if cat != "Все категории" and tip.cat != cat:
                 continue
             if q:
-                hay = normalize(tip["title"] + " " + tip["text"] + " " +
-                                tip.get("tags", "") + " " + tip["cat"])
+                hay = normalize(tip.title + " " + tip.text + " " +
+                                tip.tags + " " + tip.cat)
                 if not any(t in hay for t in q.split()):
                     continue
             self._filtered.append(tip)
         self.tree.delete(*self.tree.get_children())
         for tip in self._filtered:
-            self.tree.insert("", "end", iid=tip["id"],
-                             values=(tip["cat"], tip["title"], tip["sched"]))
+            self.tree.insert("", "end", iid=tip.id,
+                             values=(tip.cat, tip.title, tip.sched))
         self.count_label.config(text=f"Найдено: {len(self._filtered)}")
 
     def on_select(self, _event=None):
         sel = self.tree.selection()
         if not sel:
             return
-        tip = next(t for t in kb.TIPS if t["id"] == sel[0])
+        tip = next(t for t in CONTENT.tips if t.id == sel[0])
         self.detail.config(state="normal")
         self.detail.delete("1.0", "end")
-        color = kb.CAT_COLORS.get(tip["cat"], "#333333")
+        color = CONTENT.cat_colors.get(tip.cat, "#333333")
         self.detail.tag_configure("cat", foreground=color,
                                   font=("Noto Sans", 10, "bold"))
         self.detail.tag_configure("h", font=("Noto Sans", 12, "bold"))
         self.detail.tag_configure("lab", foreground=MUTED,
                                   font=("Noto Sans", 9, "bold"))
-        self.detail.insert("end", tip["title"] + "\n\n", "h")
-        self.detail.insert("end", f"[{tip['cat']}]  ", "cat")
-        self.detail.insert("end", tip["text"] + "\n\n")
+        self.detail.insert("end", tip.title + "\n\n", "h")
+        self.detail.insert("end", f"[{tip.cat}]  ", "cat")
+        self.detail.insert("end", tip.text + "\n\n")
         self.detail.insert("end", "Когда / как часто: ", "lab")
-        self.detail.insert("end", tip["sched"] + "\n")
+        self.detail.insert("end", tip.sched + "\n")
         self.detail.insert("end", "Источник: ", "lab")
-        self.detail.insert("end", tip["source"] + "\n")
+        self.detail.insert("end", tip.source + "\n")
         self.detail.config(state="disabled")
 
 
@@ -472,7 +486,7 @@ class NutritionPage(ttk.Frame):
         self.app = app
         self.models = ollama_models()
         self._build()
-        self._fill_menu(kb.MIND_MENU)
+        self._fill_menu(CONTENT.menu)
 
     def _build(self):
         # Верхняя панель: модель Ollama + генерация меню
@@ -524,28 +538,28 @@ class NutritionPage(ttk.Frame):
         rules.tag_configure("bad", foreground="#b91c1c")
         rules.config(state="normal")
         rules.insert("end", "ПОЛЕЗНЫЕ ГРУППЫ (диета MIND)\n", "h")
-        for name, amount, note in kb.MIND_GOOD:
-            rules.insert("end", f"  • {name} — {amount}", "good")
-            rules.insert("end", f" ({note})\n")
+        for g in CONTENT.mind_good:
+            rules.insert("end", f"  • {g.name} — {g.amount}", "good")
+            rules.insert("end", f" ({g.note})\n")
         rules.insert("end", "\nОГРАНИЧИТЬ\n", "h")
-        for name, amount, note in kb.MIND_LIMIT:
-            rules.insert("end", f"  • {name} — {amount}", "bad")
-            rules.insert("end", f" ({note})\n")
+        for g in CONTENT.mind_limit:
+            rules.insert("end", f"  • {g.name} — {g.amount}", "bad")
+            rules.insert("end", f" ({g.note})\n")
         rules.config(state="disabled")
 
     def _fill_menu(self, menu):
         self.tree.delete(*self.tree.get_children())
         for i, row in enumerate(menu):
-            self.tree.insert("", "end", values=(row["day"], row["breakfast"],
-                                                row["lunch"], row["dinner"],
-                                                row["snack"]),
+            self.tree.insert("", "end", values=(row.day, row.breakfast,
+                                                row.lunch, row.dinner,
+                                                row.snack),
                              tags=("odd",) if i % 2 else ())
 
     def generate_menu_ollama(self):
         model = self.model_var.get()
         if not model or not self.models:
             self.status_var.set("Ollama недоступна — показано базовое меню MIND.")
-            self._fill_menu(kb.MIND_MENU)
+            self._fill_menu(CONTENT.menu)
             return
         self.status_var.set(f"⏳ Генерирую меню ({model})...")
         self.gen_btn.config(state="disabled")
@@ -569,10 +583,10 @@ class NutritionPage(ttk.Frame):
                     self.after(0, lambda: self._menu_done(menu, "Меню сгенерировано Ollama."))
                 else:
                     self.after(0, lambda: self._menu_done(
-                        kb.MIND_MENU, "Ollama вернула не JSON — показано базовое меню."))
+                        CONTENT.menu, "Ollama вернула не JSON — показано базовое меню."))
             except Exception as exc:
                 self.after(0, lambda: self._menu_done(
-                    kb.MIND_MENU, f"Ошибка Ollama ({exc}) — показано базовое меню."))
+                    CONTENT.menu, f"Ошибка Ollama ({exc}) — показано базовое меню."))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -589,8 +603,8 @@ class NutritionPage(ttk.Frame):
             for row in data:
                 if all(k in row for k in ("day", "breakfast", "lunch",
                                           "dinner", "snack")):
-                    menu.append({k: str(row[k]).strip() for k in
-                                 ("day", "breakfast", "lunch", "dinner", "snack")})
+                    menu.append(MenuDay(**{k: str(row[k]).strip() for k in
+                                           ("day", "breakfast", "lunch", "dinner", "snack")}))
             return menu if len(menu) == 7 else None
         except Exception:
             return None
@@ -631,7 +645,7 @@ class AssistantPage(ttk.Frame):
         quick_frame.pack(fill="x", padx=12)
         tk.Label(quick_frame, text="Быстрые вопросы:", bg=BG, fg=MUTED).grid(
             row=0, column=0, rowspan=2, sticky="w", padx=(0, 4))
-        for n, q in enumerate(kb.QUICK_QUESTIONS):
+        for n, q in enumerate(CONTENT.quick_questions):
             btn = tk.Button(quick_frame, text=q, relief="groove", bd=1,
                             bg="white", fg=TEXT_FG, cursor="hand2",
                             activebackground="#ccfbf1",
@@ -744,13 +758,13 @@ class AssistantPage(ttk.Frame):
             parts.append(self._day_plan(dt.date.today()))
         tips = search_tips(query, limit=6)
         for t in tips:
-            parts.append(f"- {t['title']} [{t['cat']}]: {t['text']} "
-                         f"Когда: {t['sched']}")
+            parts.append(f"- {t.title} [{t.cat}]: {t.text} "
+                         f"Когда: {t.sched}")
         if "mind" in q or "питани" in q or "меню" in q or "еда" in q or "есть" in q:
-            good = "\n".join(f"- {name}: {amount} ({note})"
-                             for name, amount, note in kb.MIND_GOOD)
-            bad = "\n".join(f"- {name}: {amount}"
-                            for name, amount, _ in kb.MIND_LIMIT)
+            good = "\n".join(f"- {g.name}: {g.amount} ({g.note})"
+                             for g in CONTENT.mind_good)
+            bad = "\n".join(f"- {g.name}: {g.amount}"
+                            for g in CONTENT.mind_limit)
             parts.append("Правила диеты MIND (полезные группы):\n" + good +
                          "\nОграничить:\n" + bad)
         context = "\n".join(parts) if parts else "Контекст не найден."
@@ -786,9 +800,9 @@ class AssistantPage(ttk.Frame):
         lines = [f"План на {WEEKDAYS_FULL[day.weekday()].lower()}, "
                  f"{day.day:02d}.{day.month:02d} (по книге Москалева):\n"]
         for it in items:
-            lines.append(f"• {it['time']} — {it['title']}")
-            if it.get("detail"):
-                lines.append(f"   {it['detail']}")
+            lines.append(f"• {display_time(it)} — {it.title}")
+            if it.detail:
+                lines.append(f"   {it.detail}")
         lines.append("\nПолный календарь — на вкладке «Календарь».")
         return "\n".join(lines)
 
@@ -799,16 +813,16 @@ class AssistantPage(ttk.Frame):
             day = monday + dt.timedelta(days=i)
             items = get_today_plan(day)
             lines.append(f"{WEEKDAYS[i]} {day.day:02d}.{day.month:02d}: " +
-                         ", ".join(it["title"] for it in items) + ".")
+                         ", ".join(it.title for it in items) + ".")
         return "\n".join(lines)
 
     def _format_tips(self, tips) -> str:
         lines = ["Вот что советует А. А. Москалев:\n"]
         for i, tip in enumerate(tips, 1):
-            lines.append(f"{i}. {tip['title']}")
-            lines.append(f"   {tip['text']}")
-            lines.append(f"   Когда: {tip['sched']}")
-            lines.append(f"   Источник: {tip['source']}\n")
+            lines.append(f"{i}. {tip.title}")
+            lines.append(f"   {tip.text}")
+            lines.append(f"   Когда: {tip.sched}")
+            lines.append(f"   Источник: {tip.source}\n")
         lines.append("Подробнее — во вкладке «База знаний». "
                      "Лекарства и добавки — только по назначению врача.")
         return "\n".join(lines)
@@ -820,7 +834,7 @@ class AssistantPage(ttk.Frame):
                 "• «Какие добавки полезны?»\n"
                 "• «Какие анализы сдавать?»\n"
                 "• «План на сегодня»\n"
-                f"Или откройте вкладку «База знаний» — там все {len(kb.TIPS)} советов из книги.")
+                f"Или откройте вкладку «База знаний» — там все {len(CONTENT.tips)} советов из книги.")
 
 
 # ----------------------------------------------------------------------
@@ -829,7 +843,7 @@ class AssistantPage(ttk.Frame):
 class LongevityApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(kb.APP_TITLE)
+        self.title(CONTENT.app_title)
         self.geometry("1280x820")
         self.minsize(1080, 700)
         self.configure(bg=BG)
@@ -859,7 +873,7 @@ class LongevityApp(tk.Tk):
 
         tk.Label(sidebar, text="🕰", bg=SIDEBAR_BG, fg="white",
                  font=("Noto Sans", 26)).pack(pady=(18, 0))
-        tk.Label(sidebar, text=kb.APP_TITLE, bg=SIDEBAR_BG, fg="white",
+        tk.Label(sidebar, text=CONTENT.app_title, bg=SIDEBAR_BG, fg="white",
                  font=("Noto Sans", 11, "bold"), wraplength=170,
                  justify="center").pack(pady=(4, 2))
         tk.Label(sidebar, text="А. А. Москалев\n«120 лет жизни»", bg=SIDEBAR_BG,
@@ -886,7 +900,7 @@ class LongevityApp(tk.Tk):
         self.page_title = tk.Label(header, text="", bg=BG, fg=TEXT_FG,
                                    font=("Noto Sans", 15, "bold"))
         self.page_title.pack(side="left")
-        tk.Label(header, text=kb.APP_SUBTITLE, bg=BG, fg=MUTED,
+        tk.Label(header, text=CONTENT.app_subtitle, bg=BG, fg=MUTED,
                  font=("Noto Sans", 9)).pack(side="left", padx=12)
 
     def _build_pages(self):
@@ -907,7 +921,7 @@ class LongevityApp(tk.Tk):
         self.show_page("calendar")
 
     def _build_statusbar(self):
-        bar = tk.Label(self, text=kb.DISCLAIMER, bg="#e5e7eb", fg=MUTED,
+        bar = tk.Label(self, text=CONTENT.disclaimer, bg="#e5e7eb", fg=MUTED,
                        anchor="w", padx=10, pady=4, font=("Noto Sans", 8))
         bar.pack(side="bottom", fill="x")
 
