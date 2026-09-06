@@ -122,10 +122,31 @@ def test_age_restricted_tips():
 
 def test_prescription_only_tips_are_flagged():
     tips = {t["id"]: t for t in load("tips.json")}
-    expected_rx = {"proc04", "proc05", "proc06", "dob13"}
+    expected_rx = {"proc04", "proc05", "proc06", "dob13", "dob14"}
 
     for tip_id in expected_rx:
         assert tips[tip_id]["rx"] is True, f"{tip_id} применяется только по назначению врача"
 
     flagged = {t["id"] for t in tips.values() if t["rx"]}
     assert flagged == expected_rx
+
+
+def test_rx_matches_the_wording_criterion():
+    """Критерий из плана считается прямо по тексту, а не держится на списке.
+
+    Пометку rx получает совет, в тексте которого есть «только по назначению
+    врача» или «самолечение опасно». Отдельно проверяется dob03: там формула
+    другая («по анализу крови»), критерий не срабатывает, rx остаётся false —
+    решение принято и зафиксировано в Task 5.
+    """
+    matched = set()
+    for tip in load("tips.json"):
+        haystack = " ".join(
+            str(tip[field]) for field in ("title", "text", "sched", "tags")
+        ).lower().replace("ё", "е")
+        if "только по назначению врача" in haystack or "самолечение опасно" in haystack:
+            matched.add(tip["id"])
+
+    flagged = {t["id"] for t in load("tips.json") if t["rx"]}
+    assert matched == flagged, "список rx разошёлся с критерием из плана"
+    assert "dob03" not in matched
