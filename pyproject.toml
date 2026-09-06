@@ -14,10 +14,10 @@ dependencies = []
 dev = ["pytest>=7"]
 
 [tool.setuptools]
-packages = ["longevity"]
+packages = ["longevity", "longevity.data"]
 
 [tool.setuptools.package-data]
-longevity = ["data/*.json"]
+"longevity.data" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
