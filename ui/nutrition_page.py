@@ -8,7 +8,8 @@ from tkinter import ttk
 
 from longevity.content import MenuDay
 
-from .ollama import ask_ollama, ollama_models
+from .ollama import ask_ollama
+from .widgets import ModelBar
 
 
 class NutritionPage(ttk.Frame):
@@ -16,7 +17,6 @@ class NutritionPage(ttk.Frame):
         super().__init__(master, style="Page.TFrame")
         self.app = app
         self.theme = self.app.theme
-        self.models = ollama_models()
         self._build()
         self._fill_menu(self.app.content.menu)
 
@@ -28,16 +28,8 @@ class NutritionPage(ttk.Frame):
         tk.Label(top, text="Диета MIND + принципы питания Москалева",
                  bg=colors["bg"], fg=colors["text"],
                  font=self.theme.font(12, "bold")).pack(side="left")
-        tk.Label(top, text="Модель:", bg=colors["bg"], fg=colors["muted"]).pack(
-            side="left", padx=(18, 4))
-        self.model_var = tk.StringVar(value=self.models[0] if self.models else "")
-        if self.models:
-            combo = ttk.Combobox(top, textvariable=self.model_var, state="readonly",
-                                 values=self.models, width=16)
-        else:
-            combo = ttk.Combobox(top, textvariable=self.model_var, state="disabled",
-                                 values=["Ollama недоступна"], width=16)
-        combo.pack(side="left")
+        self.model_bar = ModelBar(top, self.theme, self.app.storage)
+        self.model_bar.pack(side="left", padx=(18, 0))
         self.gen_btn = ttk.Button(top, text="Сгенерировать меню (Ollama)",
                                   command=self.generate_menu_ollama)
         self.gen_btn.pack(side="left", padx=6)
@@ -92,8 +84,8 @@ class NutritionPage(ttk.Frame):
                              tags=("odd",) if i % 2 else ())
 
     def generate_menu_ollama(self):
-        model = self.model_var.get()
-        if not model or not self.models:
+        model = self.model_bar.current()
+        if not model:
             self.status_var.set("Ollama недоступна — показано базовое меню MIND.")
             self._fill_menu(self.app.content.menu)
             return

@@ -11,7 +11,8 @@ from longevity.text import analyze
 
 from .app import WEEKDAYS, WEEKDAYS_FULL
 from .calendar_page import CalendarPage
-from .ollama import ask_ollama, ollama_models
+from .ollama import ask_ollama
+from .widgets import ModelBar
 
 # Темы вопросов ассистента распознаются по основам слов (см. longevity.text.analyze),
 # а не по подстрокам — иначе понадобилась бы своя копия нормализации, которую и
@@ -41,8 +42,11 @@ class AssistantPage(ttk.Frame):
         super().__init__(master, style="Page.TFrame")
         self.app = app
         self.theme = self.app.theme
-        self.models = ollama_models()
-        self.use_ollama_var = tk.BooleanVar(value=bool(self.models))
+        # Модели опрашиваются панелью в фоновом потоке (см. ui/widgets.py) —
+        # на момент конструктора их список ещё не известен, поэтому
+        # чекбокс включён по умолчанию: как только модель появится,
+        # send_question сам её подхватит через self.model_bar.current().
+        self.use_ollama_var = tk.BooleanVar(value=True)
         self._busy = False
         self._build()
         self._greet()
@@ -79,25 +83,19 @@ class AssistantPage(ttk.Frame):
         quick_frame.columnconfigure(3, weight=1)
         quick_frame.columnconfigure(4, weight=1)
 
-        # Панель Ollama
+        # Панель Ollama: чекбокс страницы + общая панель выбора модели
         ollama_bar = ttk.Frame(self, style="Page.TFrame")
         ollama_bar.pack(fill="x", padx=12, pady=(4, 0))
         self.ollama_check = ttk.Checkbutton(
             ollama_bar, text="Использовать локальную нейросеть Ollama",
             variable=self.use_ollama_var)
         self.ollama_check.pack(side="left")
-        tk.Label(ollama_bar, text="Модель:", bg=colors["bg"], fg=colors["muted"]).pack(
-            side="left", padx=(10, 4))
-        self.model_var = tk.StringVar(value=self.models[0] if self.models else "")
-        if self.models:
-            mcombo = ttk.Combobox(ollama_bar, textvariable=self.model_var,
-                                  state="readonly", values=self.models, width=16)
-        else:
-            mcombo = ttk.Combobox(ollama_bar, textvariable=self.model_var,
-                                  state="disabled", values=["Ollama недоступна"], width=16)
-        mcombo.pack(side="left")
-        self.ollama_status = tk.Label(ollama_bar, text="", bg=colors["bg"], fg=colors["muted"])
-        self.ollama_status.pack(side="left", padx=8)
+        self.model_bar = ModelBar(ollama_bar, self.theme, self.app.storage)
+        self.model_bar.pack(side="left", padx=(10, 0))
+        # Отдельная метка «Думаю...» — про ответ на текущий вопрос, а не про
+        # состояние опроса списка моделей (у того своя метка внутри ModelBar).
+        self.thinking_status = tk.Label(ollama_bar, text="", bg=colors["bg"], fg=colors["muted"])
+        self.thinking_status.pack(side="left", padx=8)
 
         input_frame = ttk.Frame(self, style="Page.TFrame")
         input_frame.pack(fill="x", padx=12, pady=(6, 12))
@@ -162,7 +160,7 @@ class AssistantPage(ttk.Frame):
             return
         self.entry.delete(0, "end")
         self._append("Вы", text, is_user=True)
-        if self.use_ollama_var.get() and self.model_var.get() in self.models:
+        if self.use_ollama_var.get() and self.model_bar.current():
             self._answer_ollama_async(text)
         else:
             answer = self._answer(text)
@@ -170,14 +168,14 @@ class AssistantPage(ttk.Frame):
 
     # -- Ollama --------------------------------------------------------
     def _answer_ollama_async(self, query: str):
-        model = self.model_var.get()
+        model = self.model_bar.current()
         self._lock_input()
         # Синхронный участок до старта потока тоже может упасть (например,
         # сборка промпта или поиск по индексу внутри неё) — если это
         # произойдёт, поток так и не запустится и разблокировать ввод
         # будет некому, кроме нас самих здесь.
         try:
-            self.ollama_status.config(text="Думаю...")
+            self.thinking_status.config(text="Думаю...")
             self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
             prompt = self._build_ollama_prompt(query)
         except Exception:
@@ -220,7 +218,7 @@ class AssistantPage(ttk.Frame):
             self._finish_pending(result)
         finally:
             self._unlock_input()
-            self.ollama_status.config(text="")
+            self.thinking_status.config(text="")
 
     def _build_ollama_prompt(self, query: str) -> str:
         terms = set(analyze(query))
