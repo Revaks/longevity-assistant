@@ -24,7 +24,8 @@ def test_documents_where_user_data_lives():
 def test_documents_architecture():
     text = README.read_text(encoding="utf-8")
 
-    for module in ("longevity/content.py", "longevity/storage.py", "longevity/paths.py"):
+    for module in ("longevity/content.py", "longevity/storage.py",
+                   "longevity/paths.py", "longevity/schedule.py"):
         assert module in text
 
 
