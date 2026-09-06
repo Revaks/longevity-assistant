@@ -1,3 +1,4 @@
 __pycache__/
 *.pyc
 notes.json*
+*.egg-info/

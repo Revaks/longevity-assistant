@@ -1,12 +1,20 @@
 import ast
 from pathlib import Path
 
-APP = Path(__file__).resolve().parent.parent / "app.py"
+ROOT = Path(__file__).resolve().parent.parent
+SEARCH_CONSUMERS = sorted((ROOT / "ui").glob("*.py")) + [ROOT / "longevity" / "__main__.py"]
 
 
 def _defined_names() -> set[str]:
-    tree = ast.parse(APP.read_text(encoding="utf-8"))
-    return {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    names = set()
+    for path in SEARCH_CONSUMERS:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names |= {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    return names
+
+
+def _combined_source() -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in SEARCH_CONSUMERS)
 
 
 def test_app_has_no_private_search_implementation():
@@ -16,11 +24,11 @@ def test_app_has_no_private_search_implementation():
         "_count_hits", "score_tip", "search_tips",
     }
 
-    assert not leftovers, f"в app.py осталась своя реализация поиска: {sorted(leftovers)}"
+    assert not leftovers, f"в интерфейсе осталась своя реализация поиска: {sorted(leftovers)}"
 
 
 def test_app_imports_the_index():
-    source = APP.read_text(encoding="utf-8")
+    source = _combined_source()
 
     assert "SearchIndex" in source
     assert "STOPWORDS" not in source, "список стоп-слов переехал в longevity.text"

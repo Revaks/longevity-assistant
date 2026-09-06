@@ -6,20 +6,25 @@ from pathlib import Path
 
 from longevity.content import Content
 
-APP = Path(__file__).resolve().parent.parent / "app.py"
+ROOT = Path(__file__).resolve().parent.parent
+APP = ROOT / "app.py"
+UI_DIR = ROOT / "ui"
+UI_FILES = sorted(UI_DIR.glob("*.py"))
 
 
-def _tree() -> ast.Module:
-    return ast.parse(APP.read_text(encoding="utf-8"))
+def _trees():
+    return [ast.parse(p.read_text(encoding="utf-8")) for p in UI_FILES]
 
 
 def _imported_modules() -> set[str]:
+    """Модули, которые импортирует интерфейс (сейчас — пакет ui/, раньше был app.py)."""
     modules = set()
-    for node in ast.walk(_tree()):
-        if isinstance(node, ast.Import):
-            modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.add(node.module)
+    for tree in _trees():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module)
     return modules
 
 
@@ -34,21 +39,23 @@ def test_app_uses_the_package():
 
 
 def test_knowledge_base_is_gone():
-    assert not (APP.parent / "knowledge_base.py").exists()
+    assert not (ROOT / "knowledge_base.py").exists()
 
 
 def test_app_imports_without_a_display_and_without_side_effects(tmp_path):
     """Смок-тест: app импортируется в подпроцессе и ничего при этом не трогает.
 
-    Работает без DISPLAY: tkinter импортируется, окно не создаётся. Данные и
-    база открываются в main(), поэтому импорт не должен создавать даже каталог
-    пользовательских данных.
+    Работает без DISPLAY: интерфейс (а с ним и tkinter) грузится только
+    внутри main(), поэтому обычный импорт app.py не должен ни поднимать
+    tkinter, ни создавать каталог пользовательских данных — данные и база
+    открываются только при вызове main().
     """
     env = {"PATH": "/usr/bin:/bin", "XDG_DATA_HOME": str(tmp_path / "xdg"),
            "PYTHONPATH": str(APP.parent), "HOME": str(tmp_path / "home")}
 
     result = subprocess.run(
-        [sys.executable, "-c", "import app; assert app.CONTENT is None"],
+        [sys.executable, "-c", "import app; import sys; "
+                                "assert 'tkinter' not in sys.modules"],
         cwd=APP.parent, env=env, capture_output=True,
     )
 
@@ -57,13 +64,21 @@ def test_app_imports_without_a_display_and_without_side_effects(tmp_path):
 
 
 def _content_attribute_names() -> set[str]:
-    """Имена, к которым app.py обращается как CONTENT.<что-то>."""
+    """Имена, к которым интерфейс обращается как <...>.content.<что-то>.
+
+    До переезда в ui/ единый объект данных книги лежал в модульной переменной
+    CONTENT и являлся app.py; страницы обращались к ней как CONTENT.<attr>.
+    Теперь она передаётся через приложение (self.app.content в страницах,
+    self.content в самом LongevityApp) — синтаксически это всегда атрибут,
+    у которого непосредственный родитель — атрибут с именем content.
+    """
     used = set()
-    for node in ast.walk(_tree()):
-        if (isinstance(node, ast.Attribute)
-                and isinstance(node.value, ast.Name)
-                and node.value.id == "CONTENT"):
-            used.add(node.attr)
+    for tree in _trees():
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "content"):
+                used.add(node.attr)
     return used
 
 
@@ -80,25 +95,28 @@ def test_every_content_attribute_used_by_app_exists():
 
     used = _content_attribute_names()
 
-    assert used, "app.py вообще не обращается к CONTENT — тест потерял смысл"
+    assert used, "интерфейс вообще не обращается к content — тест потерял смысл"
     assert used <= known, f"нет таких полей у Content: {sorted(used - known)}"
 
 
 def test_app_does_not_read_content_data_as_dictionaries():
-    """CONTENT.tips[0]["title"] — след старого knowledge_base, а не датакласса."""
+    """content.tips[0]["title"] — след старого knowledge_base, а не датакласса."""
     offenders = []
-    for node in ast.walk(_tree()):
-        if not isinstance(node, ast.Subscript):
-            continue
-        if not (isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str)):
-            continue
-        if _rooted_at_content(node.value):
-            offenders.append(ast.unparse(node))
+    for tree in _trees():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Subscript):
+                continue
+            if not (isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str)):
+                continue
+            if _rooted_at_content(node.value):
+                offenders.append(ast.unparse(node))
 
     assert not offenders, f"словарный доступ к данным книги: {offenders}"
 
 
 def _rooted_at_content(node: ast.AST) -> bool:
     while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        if isinstance(node, ast.Attribute) and node.attr == "content":
+            return True
         node = node.value if not isinstance(node, ast.Call) else node.func
-    return isinstance(node, ast.Name) and node.id == "CONTENT"
+    return False

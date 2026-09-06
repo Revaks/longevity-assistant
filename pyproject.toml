@@ -13,8 +13,11 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 
+[project.scripts]
+longevity-assistant = "longevity.__main__:main"
+
 [tool.setuptools]
-packages = ["longevity", "longevity.data"]
+packages = ["longevity", "longevity.data", "ui"]
 
 [tool.setuptools.package-data]
 "longevity.data" = ["*.json"]

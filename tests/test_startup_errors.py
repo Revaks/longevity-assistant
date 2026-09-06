@@ -1,9 +1,10 @@
 """Проверяет, что main() не роняет приложение, если базу нельзя открыть.
 
-Обработчик ошибок старта (app.main) сам не должен звать что-либо, что может
-снова бросить исключение — иначе трассировка уйдёт в никуда под pythonw
-или в macOS-бандле, где консоли нет вовсе. Тест подменяет диалог заглушкой,
-поэтому реальный дисплей не нужен: Tk() внутри _show_start_error не создаётся.
+Обработчик ошибок старта (longevity.__main__.main) сам не должен звать
+что-либо, что может снова бросить исключение — иначе трассировка уйдёт в
+никуда под pythonw или в macOS-бандле, где консоли нет вовсе. Тест подменяет
+диалог заглушкой, поэтому реальный дисплей не нужен: Tk() внутри
+_show_start_error не создаётся.
 """
 
 import os
@@ -21,14 +22,14 @@ def test_unwritable_data_dir_shows_dialog_instead_of_crashing(tmp_path, monkeypa
 
     monkeypatch.setenv("XDG_DATA_HOME", str(locked))
 
-    import app
+    import longevity.__main__ as entrypoint
 
     shown = []
-    monkeypatch.setattr(app, "_show_start_error",
+    monkeypatch.setattr(entrypoint, "_show_start_error",
                          lambda title, reason: shown.append((title, reason)))
 
     try:
-        rc = app.main()
+        rc = entrypoint.main()
     finally:
         locked.chmod(0o700)
 
