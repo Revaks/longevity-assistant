@@ -90,7 +90,7 @@ class AssistantPage(ttk.Frame):
             ollama_bar, text="Использовать локальную нейросеть Ollama",
             variable=self.use_ollama_var)
         self.ollama_check.pack(side="left")
-        self.model_bar = ModelBar(ollama_bar, self.theme, self.app.storage)
+        self.model_bar = ModelBar(ollama_bar, self.theme, self.app.model_store)
         self.model_bar.pack(side="left", padx=(10, 0))
         # Отдельная метка «Думаю...» — про ответ на текущий вопрос, а не про
         # состояние опроса списка моделей (у того своя метка внутри ModelBar).

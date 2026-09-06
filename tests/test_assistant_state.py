@@ -9,6 +9,7 @@ def page(tmp_path, monkeypatch):
     from longevity.search import SearchIndex
     from ui.assistant_page import AssistantPage
     from ui.theme import Theme
+    from ui.widgets import ModelStore
 
     root = tk.Tk()
     root.withdraw()
@@ -18,6 +19,10 @@ def page(tmp_path, monkeypatch):
         index = SearchIndex(content)
         theme = Theme(root)   # настоящая тема: страница берёт из неё шрифты при построении
         storage = None
+        # Общий store как в LongevityApp, но никто не вызывает refresh() —
+        # эти тесты проверяют блокировку ввода, а не список моделей, и не
+        # должны тянуть сеть.
+        model_store = ModelStore(root, None)
 
     p = AssistantPage(root, FakeApp())
     yield p

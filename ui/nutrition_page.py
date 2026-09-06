@@ -28,7 +28,7 @@ class NutritionPage(ttk.Frame):
         tk.Label(top, text="Диета MIND + принципы питания Москалева",
                  bg=colors["bg"], fg=colors["text"],
                  font=self.theme.font(12, "bold")).pack(side="left")
-        self.model_bar = ModelBar(top, self.theme, self.app.storage)
+        self.model_bar = ModelBar(top, self.theme, self.app.model_store)
         self.model_bar.pack(side="left", padx=(18, 0))
         self.gen_btn = ttk.Button(top, text="Сгенерировать меню (Ollama)",
                                   command=self.generate_menu_ollama)

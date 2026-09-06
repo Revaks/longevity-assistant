@@ -1,11 +1,13 @@
-"""ModelBar — общая панель выбора модели Ollama (ui/widgets.py).
+"""ModelStore/ModelBar — общий источник истины о моделях Ollama (ui/widgets.py).
 
-Раньше две страницы держали каждая свою копию списка моделей и своего
-выпадающего списка. Эти тесты бьют по логике восстановления выбора и по
-тому, что панель не падает без хранилища — то, что раньше приходилось бы
-дублировать в каждой странице отдельно.
+ModelStore хранит список моделей, текущий выбор и опрашивает сервис; ModelBar
+— тонкое отображение поверх store, без собственной копии состояния. Эти тесты
+бьют по трём вещам, которые раньше были дефектами задачи: восстановление
+выбора, отсутствие падения фонового потока при закрытии окна, и то, что обе
+панели показывают одно и то же состояние без ручного обновления.
 """
 
+import threading
 import time
 
 import pytest
@@ -30,117 +32,106 @@ def test_choose_model_empty_available_returns_empty_string():
 
 
 @pytest.fixture
-def bar(tmp_path):
+def env(tmp_path):
+    """Скрытый корень + хранилище + пустой ModelStore на них (без опроса)."""
     tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
     from ui.theme import Theme
-    from ui.widgets import ModelBar
+    from ui.widgets import ModelStore
 
     root = tk.Tk()
     root.withdraw()
     storage = Storage(tmp_path / "data.db")
     theme = Theme(root)
-    widget = ModelBar(root, theme, storage)
-    yield widget, storage
+    store = ModelStore(root, storage)
+    yield root, theme, storage, store
     storage.close()
     root.destroy()
 
 
-def test_apply_picks_first_model_when_nothing_saved(bar):
-    widget, storage = bar
+# -- ModelStore: восстановление и откат выбора ------------------------------
 
-    widget._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+def test_apply_picks_first_model_when_nothing_saved(env):
+    _, _, storage, store = env
 
-    assert widget.current() == "qwen3-coder:30b"
+    store._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+
+    assert store.current == "qwen3-coder:30b"
     assert storage.get_value("app.ollama_model") == "qwen3-coder:30b"
 
 
-def test_apply_restores_previously_saved_model(bar):
+def test_apply_restores_previously_saved_model(env):
     """Регресс на дефект №1 задачи: по умолчанию не должна браться models[0],
     если пользователь уже выбирал другую модель раньше."""
-    widget, storage = bar
+    _, _, storage, store = env
     storage.set_value("app.ollama_model", "qwen3.5:9b")
 
-    widget._apply(["qwen3-coder:30b", "qwen3.5:9b"])
+    store._apply(["qwen3-coder:30b", "qwen3.5:9b"])
 
-    assert widget.current() == "qwen3.5:9b"
+    assert store.current == "qwen3.5:9b"
 
 
-def test_apply_falls_back_to_first_when_saved_model_gone(bar):
-    widget, storage = bar
+def test_apply_falls_back_to_first_when_saved_model_gone(env):
+    _, _, storage, store = env
     storage.set_value("app.ollama_model", "removed-model")
 
-    widget._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+    store._apply(["qwen3-coder:30b", "qwen3.5:4b"])
 
-    assert widget.current() == "qwen3-coder:30b"
-
-
-def test_apply_with_no_models_marks_bar_unavailable(bar):
-    widget, storage = bar
-
-    widget._apply([])
-
-    assert widget.current() == ""
-    assert str(widget.combo["state"]) == "disabled"
+    assert store.current == "qwen3-coder:30b"
 
 
-def test_selecting_in_combo_persists_choice(bar):
-    widget, storage = bar
-    widget._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+def test_apply_with_no_models_marks_store_unavailable(env):
+    _, _, _, store = env
 
-    widget.model_var.set("qwen3.5:4b")
-    widget._on_select()
+    store._apply([])
 
-    assert storage.get_value("app.ollama_model") == "qwen3.5:4b"
+    assert store.current == ""
+    assert store.models == []
 
 
 def test_works_without_storage():
-    """storage=None не должен ронять панель — так уже жили страницы раньше."""
+    """storage=None не должен ронять store — так уже жили страницы раньше."""
     tk = pytest.importorskip("tkinter")
-    from ui.theme import Theme
-    from ui.widgets import ModelBar
+    from ui.widgets import ModelStore
 
     root = tk.Tk()
     root.withdraw()
     try:
-        widget = ModelBar(root, Theme(root), None)
-        widget._apply(["qwen3.5:4b"])
-        assert widget.current() == "qwen3.5:4b"
+        store = ModelStore(root, None)
+        store._apply(["qwen3.5:4b"])
+        assert store.current == "qwen3.5:4b"
     finally:
         root.destroy()
 
 
-def test_selection_persists_across_a_new_bar_instance(tmp_path):
-    """Смена модели видна следующему экземпляру панели — как при перезапуске приложения."""
+def test_selection_persists_across_a_new_store_instance(tmp_path):
+    """Смена модели видна следующему store — как при перезапуске приложения."""
     tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
-    from ui.theme import Theme
-    from ui.widgets import ModelBar
+    from ui.widgets import ModelStore
 
     root = tk.Tk()
     root.withdraw()
     storage = Storage(tmp_path / "data.db")
     try:
-        theme = Theme(root)
-        first = ModelBar(root, theme, storage)
+        first = ModelStore(root, storage)
         first._apply(["qwen3-coder:30b", "qwen3.5:4b"])
-        first.model_var.set("qwen3.5:4b")
-        first._on_select()
+        first.select("qwen3.5:4b")
 
-        second = ModelBar(root, theme, storage)
+        second = ModelStore(root, storage)
         second._apply(["qwen3-coder:30b", "qwen3.5:4b"])
 
-        assert second.current() == "qwen3.5:4b", \
-            "выбор модели должен пережить создание новой панели (перезапуск приложения)"
+        assert second.current == "qwen3.5:4b", \
+            "выбор модели должен пережить создание нового store (перезапуск приложения)"
     finally:
         storage.close()
         root.destroy()
 
 
-def test_refresh_does_not_block_on_slow_network(monkeypatch, bar):
+def test_refresh_does_not_block_on_slow_network(monkeypatch, env):
     """Опрос идёт в фоновом потоке — refresh() обязан вернуться немедленно,
     а не ждать ответ сети, иначе окно снова замирает на время таймаута."""
-    widget, storage = bar
+    _, _, _, store = env
 
     def slow_list_models(timeout=3):
         time.sleep(0.3)
@@ -149,8 +140,155 @@ def test_refresh_does_not_block_on_slow_network(monkeypatch, bar):
     monkeypatch.setattr("ui.widgets.list_models", slow_list_models)
 
     start = time.monotonic()
-    widget.refresh()
+    store.refresh()
     elapsed = time.monotonic() - start
 
     assert elapsed < 0.1, "refresh() заблокировал вызывающий поток"
-    assert str(widget.refresh_btn["state"]) == "disabled"
+    assert store.busy is True
+
+
+# -- ModelBar: чистое отображение поверх store ------------------------------
+
+def test_bar_reflects_store_state_on_construction(env):
+    from ui.widgets import ModelBar
+
+    root, theme, _, store = env
+    store._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+
+    bar = ModelBar(root, theme, store)
+
+    assert bar.current() == "qwen3-coder:30b"
+    assert str(bar.combo["state"]) == "readonly"
+
+
+def test_bar_selecting_in_combo_updates_store(env):
+    from ui.widgets import ModelBar
+
+    root, theme, storage, store = env
+    store._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+    bar = ModelBar(root, theme, store)
+
+    bar.model_var.set("qwen3.5:4b")
+    bar._on_select()
+
+    assert store.current == "qwen3.5:4b"
+    assert storage.get_value("app.ollama_model") == "qwen3.5:4b"
+
+
+def test_bar_with_no_models_is_disabled(env):
+    from ui.widgets import ModelBar
+
+    root, theme, _, store = env
+    store._apply([])
+
+    bar = ModelBar(root, theme, store)
+
+    assert bar.current() == ""
+    assert str(bar.combo["state"]) == "disabled"
+
+
+# -- Требование ревью 1: смена модели видна на другой панели без обновления --
+
+def test_selecting_model_on_one_bar_updates_the_other_immediately(env):
+    """Обе страницы держат свою ModelBar, но обе смотрят в один store —
+    именно это заменяет прежние две независимые копии списка моделей."""
+    from ui.widgets import ModelBar
+
+    root, theme, storage, store = env
+    store._apply(["qwen3-coder:30b", "qwen3.5:4b"])
+
+    bar_assistant = ModelBar(root, theme, store)
+    bar_nutrition = ModelBar(root, theme, store)
+    assert bar_assistant.current() == bar_nutrition.current() == "qwen3-coder:30b"
+
+    # Пользователь меняет модель на вкладке "Ассистент"...
+    bar_assistant.model_var.set("qwen3.5:4b")
+    bar_assistant._on_select()
+
+    # ...и вкладка "Питание" видит новую модель без ручного "Обновить".
+    assert bar_nutrition.current() == "qwen3.5:4b"
+    assert bar_nutrition.model_var.get() == "qwen3.5:4b"
+    assert storage.get_value("app.ollama_model") == "qwen3.5:4b"
+
+
+# -- Требование ревью 2: опрос сервиса при старте — один раз, а не по разу на панель --
+
+def test_creating_two_bars_polls_the_service_only_once(monkeypatch, env):
+    """Раньше ModelBar сама опрашивала сервис в своём конструкторе — при
+    двух страницах это был двойной опрос. Теперь опрос запускает только тот,
+    кто явно вызывает store.refresh() (в реальном приложении — один раз в
+    LongevityApp.__init__); создание сколь угодно многих ModelBar поверх
+    одного store не должно порождать новых сетевых обращений."""
+    from ui.widgets import ModelBar
+
+    root, theme, _, store = env
+    calls = []
+
+    def counting_list_models(timeout=3):
+        calls.append(1)
+        return []
+
+    monkeypatch.setattr("ui.widgets.list_models", counting_list_models)
+
+    def settle():
+        """Дать шанс любому потоку, случайно запущенному конструктором,
+        реально выполниться — не полагаясь на удачу планировщика GIL."""
+        if store._thread is not None:
+            store._thread.join(timeout=2)
+        root.update()
+
+    ModelBar(root, theme, store)
+    settle()
+    assert calls == [], "конструктор ModelBar не должен сам опрашивать сервис"
+
+    ModelBar(root, theme, store)
+    settle()
+    assert calls == [], "конструктор второй ModelBar тоже не должен опрашивать сервис"
+
+    store.refresh()
+    settle()
+
+    assert len(calls) == 1, f"list_models вызван {len(calls)} раз(а) вместо одного"
+
+
+# -- Требование ревью 3: закрытие окна во время опроса не роняет поток -----
+
+def test_closing_window_during_poll_does_not_crash_background_thread(monkeypatch, tmp_path):
+    """Живой баг, воспроизведённый ревью: self.after(...) из фонового потока,
+    вызванный после того как окно уже уничтожено, около секунды пытается
+    достучаться до исчезнувшего цикла событий и затем бросает
+    RuntimeError('main thread is not in main loop'). Поток обязан проглотить
+    эту ошибку сам — иначе она долетает до threading.excepthook."""
+    tk = pytest.importorskip("tkinter")
+    from longevity.storage import Storage
+    from ui.widgets import ModelStore
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    store = ModelStore(root, storage)
+
+    def slow_list_models(timeout=3):
+        time.sleep(0.1)
+        return []
+
+    monkeypatch.setattr("ui.widgets.list_models", slow_list_models)
+
+    errors = []
+    old_hook = threading.excepthook
+    threading.excepthook = lambda args: errors.append(args)
+    try:
+        store.refresh()
+        thread = store._thread
+        storage.close()
+        root.destroy()  # окно закрыто раньше ответа сервиса — обычный сценарий
+        # RuntimeError у self.after() из чужого потока после destroy()
+        # всплывает не сразу (внутренняя попытка достучаться до цикла
+        # событий занимает около секунды) — дожидаемся потока целиком,
+        # а не спим наугад.
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "фоновый поток так и не завершился"
+    finally:
+        threading.excepthook = old_hook
+
+    assert errors == [], f"фоновый поток бросил исключение при закрытии окна: {errors}"

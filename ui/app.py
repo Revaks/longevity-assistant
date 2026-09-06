@@ -10,6 +10,7 @@ from longevity.search import SearchIndex
 from longevity.storage import Storage
 
 from .theme import Theme
+from .widgets import ModelStore
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAYS_FULL = ["Понедельник", "Вторник", "Среда", "Четверг",
@@ -40,6 +41,11 @@ class LongevityApp(tk.Tk):
         self.index = index
         self.storage = storage
         self.theme = Theme(self)
+        # Единственный источник истины о моделях Ollama — общий на обе
+        # страницы. Опрашивается один раз здесь, а не по разу на страницу;
+        # смена модели на одной панели видна на другой через subscribe().
+        self.model_store = ModelStore(self, self.storage)
+        self.model_store.refresh()
 
         self.title(self.content.app_title)
         self.minsize(*MIN_SIZE)
