@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "longevity-assistant"
+version = "0.2.0"
+description = "Календарь рекомендаций, база знаний и ассистент по книге А. А. Москалева"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["longevity"]
+
+[tool.setuptools.package-data]
+longevity = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
