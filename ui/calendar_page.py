@@ -9,6 +9,9 @@ from longevity.schedule import display_time, get_today_plan
 
 from .app import WEEKDAYS_FULL, fmt_day
 
+#: Высота поля заметки в строках. Заметка на день многострочная по спеке.
+NOTE_HEIGHT = 3
+
 
 class CalendarPage(ttk.Frame):
     #: Фон шапки обычного и выбранного дня — разовые оттенки этой страницы,
@@ -86,15 +89,19 @@ class CalendarPage(ttk.Frame):
         notes_bar = ttk.Frame(self, style="Page.TFrame")
         notes_bar.pack(fill="x", padx=12, pady=(0, 12))
         tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
-                 fg=colors["text"]).pack(side="left")
-        self.note_var = tk.StringVar()
-        self.note_entry = ttk.Entry(notes_bar, textvariable=self.note_var,
-                                    font=self.theme.font(10))
-        self.note_entry.pack(side="left", fill="x", expand=True, padx=6)
+                 fg=colors["text"]).pack(side="left", anchor="n")
+        # Поле многострочное: в заметку на день пишут список из нескольких
+        # пунктов, и однострочный Entry обрезал его в одну строку без
+        # возможности перенести. Три строки — то, что требует спека.
+        self.note_text = tk.Text(notes_bar, height=NOTE_HEIGHT, wrap="word",
+                                 relief="groove", bd=1, padx=6, pady=4,
+                                 font=self.theme.font(10),
+                                 bg=colors["card"], fg=colors["text"])
+        self.note_text.pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(notes_bar, text="Сохранить",
-                   command=self._save_note).pack(side="left", padx=2)
+                   command=self._save_note).pack(side="left", padx=2, anchor="n")
         ttk.Button(notes_bar, text="Удалить",
-                   command=self._delete_note).pack(side="left", padx=2)
+                   command=self._delete_note).pack(side="left", padx=2, anchor="n")
 
         self.refresh()
 
@@ -175,14 +182,23 @@ class CalendarPage(ttk.Frame):
         self._load_note_to_entry()
 
     # -- заметки -------------------------------------------------------
+    def note_value(self) -> str:
+        """Текст заметки без служебного перевода строки, который добавляет Tk."""
+        return self.note_text.get("1.0", "end-1c")
+
+    def _set_note_value(self, text: str) -> None:
+        self.note_text.delete("1.0", "end")
+        if text:
+            self.note_text.insert("1.0", text)
+
     def _load_note_to_entry(self):
         key = self.selected_day.isoformat()
-        self.note_var.set(self.storage.get_note(key))
+        self._set_note_value(self.storage.get_note(key))
 
     def _save_note(self):
         key = self.selected_day.isoformat()
         try:
-            self.storage.set_note(key, self.note_var.get())
+            self.storage.set_note(key, self.note_value())
         except Exception as exc:
             messagebox.showerror("Не удалось сохранить заметку", str(exc))
             return
@@ -195,7 +211,7 @@ class CalendarPage(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Не удалось удалить заметку", str(exc))
             return
-        self.note_var.set("")
+        self._set_note_value("")
         self.refresh()
 
     def _show_day_detail(self):

@@ -1,4 +1,4 @@
-"""Индикатор заметки в шапке дня.
+"""Заметка на день: индикатор в шапке и само поле ввода.
 
 Раньше отметка о заметке рисовалась эмодзи (" 📝" в тексте шапки) и была
 убрана вместе с прочими эмодзи интерфейса. Эта проверка следит, чтобы
@@ -87,6 +87,85 @@ def test_today_header_uses_light_variant_other_days_use_dark(tk, tmp_path):
             "сегодня фон тёмный (accent) — нужен светлый вариант иконки")
         assert other_header.cget("image") == dark, (
             "на светлом фоне обычного дня нужен тёмный вариант иконки")
+    finally:
+        storage.close()
+        root.destroy()
+
+
+# -- поле заметки: многострочное ------------------------------------------
+#
+# Спека требует поле в три строки; в отчёте фазы 1 это было ошибочно
+# объявлено сделанным, а на странице до сих пор стоял однострочный Entry —
+# перенос строки в него было просто не ввести.
+
+def test_note_field_is_a_three_line_text_widget(tk, tmp_path):
+    from longevity.storage import Storage
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    try:
+        page = _build_page(root, storage)
+
+        assert page.note_text.winfo_class() == "Text", \
+            "поле заметки должно быть текстовым, а не однострочным Entry"
+        assert int(page.note_text.cget("height")) == 3
+    finally:
+        storage.close()
+        root.destroy()
+
+
+def test_multiline_note_is_saved_and_read_back(tk, tmp_path):
+    """Текст с переносами доходит до базы и возвращается из неё целиком."""
+    from longevity.storage import Storage
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    note = "утро: витамин D\nднём: прогулка 40 минут\nвечером: без экрана"
+    try:
+        page = _build_page(root, storage)
+        page.goto_today()
+        today = dt.date.today().isoformat()
+
+        page.note_text.insert("1.0", note)
+        page._save_note()
+
+        assert storage.get_note(today) == note, \
+            f"в базу ушло не то, что ввели: {storage.get_note(today)!r}"
+        # refresh() внутри _save_note перечитал заметку из базы в поле —
+        # ровно этот же путь отрабатывает при переключении дня.
+        assert page.note_value() == note, "поле показывает не то, что в базе"
+        assert page.note_value().count("\n") == 2
+
+        page._delete_note()
+
+        assert storage.get_note(today) == ""
+        assert page.note_value() == ""
+    finally:
+        storage.close()
+        root.destroy()
+
+
+def test_note_field_follows_the_selected_day(tk, tmp_path):
+    """Переключение дня подставляет заметку этого дня, а не оставляет чужую."""
+    from longevity.storage import Storage
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    try:
+        page = _build_page(root, storage)
+        page.goto_today()
+        monday = page.week_start
+        storage.set_note(monday.isoformat(), "понедельник:\nсдать анализы")
+        storage.set_note((monday + dt.timedelta(days=1)).isoformat(), "вторник:\nбассейн")
+
+        page._on_col_click(0)
+        assert page.note_value() == "понедельник:\nсдать анализы"
+
+        page._on_col_click(1)
+        assert page.note_value() == "вторник:\nбассейн"
     finally:
         storage.close()
         root.destroy()
