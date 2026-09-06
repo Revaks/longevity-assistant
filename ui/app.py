@@ -53,7 +53,6 @@ class LongevityApp(tk.Tk):
             try:
                 w, h = int(saved_size[0]), int(saved_size[1])
                 # Проверяем сохранённый размер на вместимость
-                fitted_w, fitted_h = fit_geometry(screen_w, screen_h)
                 w = max(MIN_SIZE[0], min(w, int(screen_w * 0.95)))
                 h = max(MIN_SIZE[1], min(h, int(screen_h * 0.95)))
                 self.geometry(f"{w}x{h}")
@@ -79,10 +78,8 @@ class LongevityApp(tk.Tk):
         """Закрыть соединение с базой и сохранить состояние окна."""
         # Сохраняем размер окна и активную вкладку
         try:
-            geometry = self.geometry()
-            # geometry возвращает строку вида "1280x820+100+200"
-            size_part = geometry.split("+")[0]
-            w, h = map(int, size_part.split("x"))
+            w = self.winfo_width()
+            h = self.winfo_height()
             self.storage.set_value("app.window_size", [w, h])
         except Exception:
             pass
