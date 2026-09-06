@@ -15,6 +15,16 @@ WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAYS_FULL = ["Понедельник", "Вторник", "Среда", "Четверг",
                  "Пятница", "Суббота", "Воскресенье"]
 
+PREFERRED_SIZE = (1280, 820)
+MIN_SIZE = (900, 600)
+
+
+def fit_geometry(screen_w: int, screen_h: int) -> tuple[int, int]:
+    """Стартовый размер: желаемый, но не больше экрана и не меньше минимума."""
+    width = max(MIN_SIZE[0], min(PREFERRED_SIZE[0], int(screen_w * 0.95)))
+    height = max(MIN_SIZE[1], min(PREFERRED_SIZE[1], int(screen_h * 0.95)))
+    return width, height
+
 
 def fmt_day(day: dt.date) -> str:
     return f"{WEEKDAYS[day.weekday()]} {day.day:02d}.{day.month:02d}"
@@ -32,8 +42,30 @@ class LongevityApp(tk.Tk):
         self.theme = Theme(self)
 
         self.title(self.content.app_title)
-        self.geometry("1280x820")
-        self.minsize(1080, 700)
+        self.minsize(*MIN_SIZE)
+
+        # Восстанавливаем сохранённый размер или используем подходящий для экрана
+        saved_size = self.storage.get_value("app.window_size")
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+
+        if isinstance(saved_size, (list, tuple)) and len(saved_size) == 2:
+            try:
+                w, h = int(saved_size[0]), int(saved_size[1])
+                # Проверяем сохранённый размер на вместимость
+                fitted_w, fitted_h = fit_geometry(screen_w, screen_h)
+                w = max(MIN_SIZE[0], min(w, int(screen_w * 0.95)))
+                h = max(MIN_SIZE[1], min(h, int(screen_h * 0.95)))
+                self.geometry(f"{w}x{h}")
+            except (ValueError, TypeError):
+                # Испорченный размер, используем подходящий для экрана
+                w, h = fit_geometry(screen_w, screen_h)
+                self.geometry(f"{w}x{h}")
+        else:
+            # Размер не сохранён, используем подходящий для экрана
+            w, h = fit_geometry(screen_w, screen_h)
+            self.geometry(f"{w}x{h}")
+
         self.configure(bg=self.theme.colors["bg"])
 
         self._configure_styles()
@@ -44,7 +76,23 @@ class LongevityApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_close(self):
-        """Закрыть соединение с базой — иначе оно висит до конца процесса."""
+        """Закрыть соединение с базой и сохранить состояние окна."""
+        # Сохраняем размер окна и активную вкладку
+        try:
+            geometry = self.geometry()
+            # geometry возвращает строку вида "1280x820+100+200"
+            size_part = geometry.split("+")[0]
+            w, h = map(int, size_part.split("x"))
+            self.storage.set_value("app.window_size", [w, h])
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "current_page"):
+                self.storage.set_value("app.active_page", self.current_page)
+        except Exception:
+            pass
+
         try:
             self.storage.close()
         except Exception:
@@ -129,7 +177,12 @@ class LongevityApp(tk.Tk):
             page.grid(row=0, column=0, sticky="nsew")
             self.pages[key] = page
 
-        self.show_page("calendar")
+        # Восстанавливаем активную вкладку, если она известна
+        saved_page = self.storage.get_value("app.active_page")
+        if isinstance(saved_page, str) and saved_page in self.pages:
+            self.show_page(saved_page)
+        else:
+            self.show_page("calendar")
 
     def _build_statusbar(self):
         bar = tk.Label(self, text=self.content.disclaimer, bg="#e5e7eb",
@@ -151,3 +204,4 @@ class LongevityApp(tk.Tk):
                 btn.config(bg=self.theme.colors["sidebar_active"])
             else:
                 btn.config(bg=self.theme.colors["sidebar"])
+        self.current_page = key
