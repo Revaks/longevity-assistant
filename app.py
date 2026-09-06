@@ -9,7 +9,6 @@
 
 import datetime as dt
 import json
-import re
 import sqlite3
 import sys
 import threading
@@ -21,7 +20,9 @@ from tkinter import messagebox, ttk
 from longevity import paths
 from longevity.content import Content, ContentError, MenuDay, load_content
 from longevity.schedule import display_time, get_today_plan
+from longevity.search import SearchIndex
 from longevity.storage import Storage, StorageError
+from longevity.text import analyze
 
 OLLAMA_URL = "http://localhost:11434"
 
@@ -29,6 +30,10 @@ OLLAMA_URL = "http://localhost:11434"
 #: до создания окна показать ошибку нечем, а под pythonw и в macOS-бандле
 #: консоли нет вообще, и приложение просто молча не открывалось бы.
 CONTENT: Content = None
+
+#: Единый поисковый индекс для обеих вкладок. Строится в main() сразу после
+#: CONTENT — до этого момента поиск использовать нельзя.
+INDEX: SearchIndex = None
 
 _STORAGE: Storage | None = None
 
@@ -50,85 +55,27 @@ ACCENT = "#0f766e"
 TEXT_FG = "#111827"
 MUTED = "#6b7280"
 
+# Темы вопросов ассистента распознаются по основам слов (см. longevity.text.analyze),
+# а не по подстрокам — иначе понадобилась бы своя копия нормализации, которую и
+# убирает эта задача. Основы ниже — фактический вывод analyze() на соответствующих
+# словах, проверено вручную:
+#   analyze("план") == ["план"]
+#   analyze("сегодня") == ["сегодн"]
+#   analyze("расписание") == ["расписан"]
+#   analyze("режим дня") == ["режим", "дня"]
+#   analyze("график") == ["график"]
+PLAN_STEMS = {"план", "сегодн", "расписан", "режим", "дня", "график"}
 
-# ----------------------------------------------------------------------
-# Вспомогательные функции для поиска
-# ----------------------------------------------------------------------
-STOPWORDS = {
-    "что", "как", "какие", "какой", "какая", "какое", "сколько", "для", "это",
-    "этот", "эта", "эти", "при", "надо", "нужно", "можно", "ли", "или", "не",
-    "да", "нет", "очень", "вообще", "просто", "если", "чтобы", "почему",
-    "зачем", "где", "когда", "мне", "я", "вы", "мы", "принимать", "делать",
-    "сдавать", "посоветуй", "подскажи", "расскажи", "хочу", "хочется",
-}
+#   analyze("календарь") == ["календар"]
+#   analyze("неделя") == ["недел"]
+CALENDAR_STEMS = {"календар", "недел"}
 
-
-def normalize(text: str) -> str:
-    text = text.lower().replace("ё", "е")
-    return re.sub(r"[^a-zа-я0-9]+", " ", text).strip()
-
-
-def tokenize(text: str) -> list:
-    return [t for t in normalize(text).split() if t]
-
-
-def expand_query(query: str) -> list:
-    tokens = tokenize(query)
-    expanded = []
-    for t in tokens:
-        if t in STOPWORDS:
-            continue
-        expanded.append(t)
-        if t in CONTENT.synonyms:
-            expanded.extend(CONTENT.synonyms[t].split())
-    return expanded
-
-
-def _word_match(a: str, b: str) -> bool:
-    """Совпадение с учётом простейшего отсечения русских окончаний."""
-    if a == b:
-        return True
-    if min(len(a), len(b)) >= 5:
-        return b.startswith(a) or a.startswith(b)
-    return False
-
-
-def _count_hits(query_tokens, field: str, weight: float) -> float:
-    words = field.split()
-    score = 0.0
-    for t in query_tokens:
-        if len(t) < 2:
-            continue
-        for w in words:
-            if _word_match(t, w):
-                score += weight
-    return score
-
-
-def score_tip(query_tokens: list, tip) -> float:
-    title = normalize(tip.title)
-    tags = normalize(tip.tags)
-    text = normalize(tip.text)
-    cat = normalize(tip.cat)
-    score = 0.0
-    score += _count_hits(query_tokens, title, 3.0)
-    score += _count_hits(query_tokens, tags, 2.0)
-    score += _count_hits(query_tokens, text, 1.0)
-    for t in query_tokens:
-        if any(_word_match(t, w) for w in cat.split()):
-            score += 0.5
-    return score
-
-
-def search_tips(query: str, limit: int = 5):
-    tokens = expand_query(query)
-    scored = []
-    for tip in CONTENT.tips:
-        s = score_tip(tokens, tip)
-        if s > 0:
-            scored.append((s, tip))
-    scored.sort(key=lambda x: -x[0])
-    return [tip for _, tip in scored[:limit]]
+#   analyze("mind") == ["mind"]
+#   analyze("питание") == ["питан"]
+#   analyze("меню") == ["мен"]
+#   analyze("еда") == ["еда"]
+#   analyze("есть") == ["ест"]
+NUTRITION_STEMS = {"mind", "питан", "мен", "еда", "ест"}
 
 
 def fmt_day(day: dt.date) -> str:
@@ -413,23 +360,21 @@ class KnowledgePage(ttk.Frame):
         self.refresh_list()
 
     def refresh_list(self):
-        q = normalize(self.search_var.get())
+        query = self.search_var.get().strip()
         cat = self.cat_var.get()
-        self._filtered = []
-        for tip in CONTENT.tips:
-            if cat != "Все категории" and tip.cat != cat:
-                continue
-            if q:
-                hay = normalize(tip.title + " " + tip.text + " " +
-                                tip.tags + " " + tip.cat)
-                if not any(t in hay for t in q.split()):
-                    continue
-            self._filtered.append(tip)
+
+        if query:
+            tips = [hit.tip for hit in INDEX.search(query)]
+        else:
+            tips = list(CONTENT.tips)
+        if cat != "Все категории":
+            tips = [t for t in tips if t.cat == cat]
+
+        self._filtered = tips
         self.tree.delete(*self.tree.get_children())
-        for tip in self._filtered:
-            self.tree.insert("", "end", iid=tip.id,
-                             values=(tip.cat, tip.title, tip.sched))
-        self.count_label.config(text=f"Найдено: {len(self._filtered)}")
+        for tip in tips:
+            self.tree.insert("", "end", iid=tip.id, values=(tip.cat, tip.title, tip.sched))
+        self.count_label.config(text=f"Найдено: {len(tips)}")
 
     def on_select(self, _event=None):
         sel = self.tree.selection()
@@ -729,15 +674,15 @@ class AssistantPage(ttk.Frame):
         self.ollama_status.config(text="")
 
     def _build_ollama_prompt(self, query: str) -> str:
-        q = normalize(query)
+        terms = set(analyze(query))
         parts = []
-        if any(w in q for w in ("план", "сегодня", "расписан", "режим дня")):
+        if terms & PLAN_STEMS:
             parts.append(self._day_plan(dt.date.today()))
-        tips = search_tips(query, limit=6)
+        tips = [hit.tip for hit in INDEX.search(query, limit=6)]
         for t in tips:
             parts.append(f"- {t.title} [{t.cat}]: {t.text} "
                          f"Когда: {t.sched}")
-        if "mind" in q or "питани" in q or "меню" in q or "еда" in q or "есть" in q:
+        if terms & NUTRITION_STEMS:
             good = "\n".join(f"- {g.name}: {g.amount} ({g.note})"
                              for g in CONTENT.mind_good)
             bad = "\n".join(f"- {g.name}: {g.amount}"
@@ -758,16 +703,16 @@ class AssistantPage(ttk.Frame):
 
     # -- логика ответов ------------------------------------------------
     def _answer(self, query: str) -> str:
-        q = normalize(query)
+        terms = set(analyze(query))
 
         # План на день / календарь
-        if any(w in q for w in ("план", "сегодня", "расписан", "режим дня", "график")):
+        if terms & PLAN_STEMS:
             return self._day_plan(dt.date.today())
 
-        if "календар" in q or "недел" in q:
+        if terms & CALENDAR_STEMS:
             return self._week_plan()
 
-        tips = search_tips(query, limit=4)
+        tips = [hit.tip for hit in INDEX.search(query, limit=4)]
         if not tips:
             return self._fallback()
         return self._format_tips(tips)
@@ -943,7 +888,7 @@ def _show_start_error(title: str, reason: str) -> None:
 
 def main() -> int:
     """Точка входа: сначала данные и база, потом окно."""
-    global CONTENT, _STORAGE
+    global CONTENT, INDEX, _STORAGE
 
     try:
         CONTENT = load_content()
@@ -952,6 +897,7 @@ def main() -> int:
             "Не удалось загрузить данные приложения — они противоречивы "
             "или повреждены. Переустановите «Ассистент долголетия».", str(exc))
         return 1
+    INDEX = SearchIndex(CONTENT)
 
     try:
         _STORAGE = Storage(paths.db_path())
