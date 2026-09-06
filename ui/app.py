@@ -80,7 +80,9 @@ class LongevityApp(tk.Tk):
         try:
             w = self.winfo_width()
             h = self.winfo_height()
-            self.storage.set_value("app.window_size", [w, h])
+            # Сохраняем только правдоподобные размеры (не 1x1 для скрытого/неотрисованного окна)
+            if w >= MIN_SIZE[0] and h >= MIN_SIZE[1]:
+                self.storage.set_value("app.window_size", [w, h])
         except Exception:
             pass
 
