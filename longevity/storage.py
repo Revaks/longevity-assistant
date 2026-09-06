@@ -7,6 +7,15 @@ from pathlib import Path
 
 SCHEMA_VERSION = "1"
 
+#: Префикс для ключей настроек приложения.
+APP_PREFIX = "app."
+
+#: Префикс для ключей профиля пользователя.
+USER_PREFIX = "user."
+
+#: Допустимые префиксы ключей.
+_PREFIXES = (APP_PREFIX, USER_PREFIX)
+
 #: Ключ meta, в который записывается путь к резервной копии notes.json.
 #: Нужен человеку, откатившемуся на старую версию: README новой версии
 #: откат уберёт, а база останется на месте.
@@ -50,6 +59,10 @@ CREATE TABLE IF NOT EXISTS embeddings (
 
 class StorageError(Exception):
     """С этой базой работать нельзя — например, её создала более новая версия."""
+
+
+class UnknownKeyPrefix(ValueError):
+    """Ключ настройки не относится ни к приложению, ни к профилю."""
 
 
 class Storage:
@@ -149,17 +162,42 @@ class Storage:
         return {row["item_id"]: row["n"] for row in rows}
 
     # -- настройки и профиль -------------------------------------------
-    def get_setting(self, key: str, default: str | None = None) -> str | None:
-        row = self._conn.execute("SELECT value FROM profile WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else default
+    def get_value(self, key: str, default=None):
+        """Значение настройки любого JSON-типа. Испорченное значение — как отсутствующее."""
+        _check_prefix(key)
+        row = self._conn.execute(
+            "SELECT value FROM profile WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except json.JSONDecodeError:
+            return default
 
-    def set_setting(self, key: str, value: str) -> None:
+    def set_value(self, key: str, value) -> None:
+        """Сохранить значение любого JSON-совместимого типа."""
+        _check_prefix(key)
         with self._conn:
             self._conn.execute(
                 "INSERT INTO profile (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
+                (key, json.dumps(value, ensure_ascii=False)),
             )
+
+    def all_values(self, prefix: str) -> dict:
+        """Все значения с этим префиксом; в ключах результата префикса нет."""
+        if prefix not in _PREFIXES:
+            raise UnknownKeyPrefix(f"неизвестный префикс: {prefix!r}")
+        rows = self._conn.execute(
+            "SELECT key, value FROM profile WHERE key LIKE ?", (prefix + "%",)
+        ).fetchall()
+        result = {}
+        for row in rows:
+            try:
+                result[row["key"][len(prefix):]] = json.loads(row["value"])
+            except json.JSONDecodeError:
+                continue
+        return result
 
     def get_meta(self, key: str) -> str | None:
         row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
@@ -300,3 +338,10 @@ def _free_backup_path(path: Path) -> Path | None:
         if not numbered.exists():
             return numbered
     return None
+
+
+def _check_prefix(key: str) -> None:
+    """Проверить, что ключ начинается с известного префикса."""
+    if not key.startswith(_PREFIXES):
+        raise UnknownKeyPrefix(
+            f"ключ {key!r} должен начинаться с {APP_PREFIX!r} или {USER_PREFIX!r}")

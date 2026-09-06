@@ -76,13 +76,14 @@ def test_completion_counts_over_a_week(store):
 
 
 def test_settings_roundtrip_with_default(store):
-    assert store.get_setting("model") is None
-    assert store.get_setting("model", "qwen3.5:4b") == "qwen3.5:4b"
+    from longevity.storage import APP_PREFIX
+    assert store.get_value(APP_PREFIX + "model") is None
+    assert store.get_value(APP_PREFIX + "model", "qwen3.5:4b") == "qwen3.5:4b"
 
-    store.set_setting("model", "qwen3.5:9b")
-    store.set_setting("model", "qwen3.5:4b")
+    store.set_value(APP_PREFIX + "model", "qwen3.5:9b")
+    store.set_value(APP_PREFIX + "model", "qwen3.5:4b")
 
-    assert store.get_setting("model") == "qwen3.5:4b"
+    assert store.get_value(APP_PREFIX + "model") == "qwen3.5:4b"
 
 
 def test_vectors_roundtrip(store):
