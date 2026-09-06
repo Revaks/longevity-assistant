@@ -18,6 +18,7 @@ from tkinter import messagebox, ttk
 
 from longevity import paths
 from longevity.content import MenuDay, load_content
+from longevity.schedule import display_time, get_today_plan
 from longevity.storage import Storage
 
 CONTENT = load_content()
@@ -127,31 +128,6 @@ def search_tips(query: str, limit: int = 5):
             scored.append((s, tip))
     scored.sort(key=lambda x: -x[0])
     return [tip for _, tip in scored[:limit]]
-
-
-def get_today_plan(day: dt.date):
-    """Возвращает пункты расписания на конкретную дату."""
-    wd = day.weekday()
-    items = [s for s in CONTENT.schedule if wd in s.days]
-    return sorted(items, key=lambda s: _time_key(display_time(s)))
-
-
-def display_time(item) -> str:
-    """Текст времени для пункта расписания: якорь заменил старую строку 'time'."""
-    if item.anchor == "clock":
-        return item.time
-    if item.anchor == "morning":
-        return "утро"
-    return "весь день"
-
-
-def _time_key(t: str):
-    m = re.match(r"^(\d{1,2}):(\d{2})$", t)
-    if m:
-        return (0, int(m.group(1)), int(m.group(2)))
-    if t.startswith("утро"):
-        return (0, 6, 0)
-    return (1, 0, 0)
 
 
 def fmt_day(day: dt.date) -> str:
@@ -309,7 +285,7 @@ class CalendarPage(ttk.Frame):
 
             txt.config(state="normal")
             txt.delete("1.0", "end")
-            items = get_today_plan(day)
+            items = get_today_plan(CONTENT, day)
             for it in items:
                 color = CONTENT.cat_colors.get(it.cat, "#333333")
                 tag = f"cat{i}_{it.cat.replace(' ', '')}"
@@ -356,7 +332,7 @@ class CalendarPage(ttk.Frame):
         self.detail.config(state="normal")
         self.detail.delete("1.0", "end")
         day = self.selected_day
-        items = get_today_plan(day)
+        items = get_today_plan(CONTENT, day)
         self.detail.insert("end", f"{WEEKDAYS_FULL[day.weekday()]}, "
                                   f"{day.day:02d}.{day.month:02d}.{day.year}\n", "h")
         self.detail.tag_configure("h", font=("Noto Sans", 11, "bold"))
@@ -458,7 +434,7 @@ class KnowledgePage(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             return
-        tip = next(t for t in CONTENT.tips if t.id == sel[0])
+        tip = CONTENT.tip(sel[0])
         self.detail.config(state="normal")
         self.detail.delete("1.0", "end")
         color = CONTENT.cat_colors.get(tip.cat, "#333333")
@@ -796,7 +772,7 @@ class AssistantPage(ttk.Frame):
         return self._format_tips(tips)
 
     def _day_plan(self, day: dt.date) -> str:
-        items = get_today_plan(day)
+        items = get_today_plan(CONTENT, day)
         lines = [f"План на {WEEKDAYS_FULL[day.weekday()].lower()}, "
                  f"{day.day:02d}.{day.month:02d} (по книге Москалева):\n"]
         for it in items:
@@ -811,7 +787,7 @@ class AssistantPage(ttk.Frame):
         lines = ["Расписание на текущую неделю:\n"]
         for i in range(7):
             day = monday + dt.timedelta(days=i)
-            items = get_today_plan(day)
+            items = get_today_plan(CONTENT, day)
             lines.append(f"{WEEKDAYS[i]} {day.day:02d}.{day.month:02d}: " +
                          ", ".join(it.title for it in items) + ".")
         return "\n".join(lines)
