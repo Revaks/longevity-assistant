@@ -70,9 +70,11 @@ class LongevityApp(tk.Tk):
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
+        tk.Label(sidebar, image=self.theme.icon("clock", 32),
+                 bg=colors["sidebar"]).pack(pady=(18, 2))
         tk.Label(sidebar, text=self.content.app_title, bg=colors["sidebar"],
                  fg=colors["card"], font=self.theme.font(11, "bold"), wraplength=170,
-                 justify="center").pack(pady=(18, 2))
+                 justify="center").pack(pady=(0, 2))
         tk.Label(sidebar, text="А. А. Москалев\n«120 лет жизни»", bg=colors["sidebar"],
                  fg="#9ca3af", font=self.theme.font(8), justify="center").pack(pady=(0, 14))
 

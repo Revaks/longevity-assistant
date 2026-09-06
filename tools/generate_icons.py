@@ -38,18 +38,28 @@ SCALE = 4
 SIZES = (16, 32)
 
 #: Цвет каждой иконки — по тому, на каком фоне она реально стоит в интерфейсе.
-#: Четыре пункта меню лежат на тёмном фоне сайдбара (PALETTE["sidebar"]), поэтому
-#: рисуются светлым — тем же PALETTE["card"], каким там же написан текст. Иконка
-#: заметки и часы стоят на светлых поверхностях (шапка дня, карточки), поэтому
-#: рисуются тёмным — PALETTE["sidebar"]. Цвет — параметр функций рисования,
-#: смена палитры — правка одного этого словаря.
+#: Четыре пункта меню и логотип-часы лежат на тёмном фоне сайдбара
+#: (PALETTE["sidebar"]), поэтому рисуются светлым — тем же PALETTE["card"], каким
+#: там же написан текст. Иконка заметки в обычной и выбранной шапке дня стоит на
+#: светлом фоне, поэтому рисуется тёмным — PALETTE["sidebar"].
+#:
+#: У шапки «сегодня» фон другой — PALETTE["accent"] (тёмный бирюзовый), и та же
+#: тёмная иконка заметки на нём проваливается в контраст ниже порога WCAG AA для
+#: графики (3:1, см. tests/test_icons.py::test_note_icon_contrast_meets_wcag_aa):
+#: contrast(PALETTE["sidebar"], PALETTE["accent"]) = 2.68. Поэтому для этого фона
+#: заведён отдельный светлый вариант "note-light" — тот же рисунок, цвет
+#: PALETTE["card"]; выбор между "note"/"note-light" делает CalendarPage.refresh()
+#: по тому, сегодняшний это день или нет.
+#:
+#: Цвет — параметр функций рисования, смена палитры — правка этого словаря.
 COLOR_BY_NAME = {
     "calendar": PALETTE["card"],
     "nutrition": PALETTE["card"],
     "knowledge": PALETTE["card"],
     "assistant": PALETTE["card"],
+    "clock": PALETTE["card"],
     "note": PALETTE["sidebar"],
-    "clock": PALETTE["sidebar"],
+    "note-light": PALETTE["card"],
 }
 
 
@@ -195,8 +205,22 @@ ICONS = {
     "knowledge": draw_knowledge,
     "assistant": draw_assistant,
     "note": draw_note,
+    "note-light": draw_note,
     "clock": draw_clock,
 }
+
+
+def _describe(path: Path) -> str:
+    """Путь для печати: относительный к ROOT, если получится, иначе как есть.
+
+    out_dir — параметр не только для смены палитры, но и для генерации во
+    временный каталог (тесты, песочница); path.relative_to(ROOT) в таком
+    случае бросает ValueError, а это не повод падать посреди записи файлов.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def generate(colors: dict[str, str] = COLOR_BY_NAME, out_dir: Path = OUT_DIR) -> None:
@@ -207,7 +231,7 @@ def generate(colors: dict[str, str] = COLOR_BY_NAME, out_dir: Path = OUT_DIR) ->
             img = _finish(img, size)
             path = out_dir / f"{name}-{size}.png"
             img.save(path)
-            print(f"написано {path.relative_to(ROOT)} ({path.stat().st_size} байт)")
+            print(f"написано {_describe(path)} ({path.stat().st_size} байт)")
 
 
 if __name__ == "__main__":

@@ -48,3 +48,49 @@ def test_note_icon_tracks_note_presence(tmp_path):
     finally:
         storage.close()
         root.destroy()
+
+
+def test_today_header_uses_light_variant_other_days_use_dark(tmp_path):
+    """Не просто "иконка есть", а именно тот вариант, который читаем на фоне.
+
+    Фон "сегодня" темнее фона остальных дней (contrast_ratio проверяет это
+    числом в tests/test_icons.py) — здесь проверяется, что CalendarPage
+    действительно выбирает под него "note-light", а не всегда один и тот же
+    файл. Без этой проверки регрессия ("note" и для сегодня тоже) прошла бы
+    незамеченной: индикатор остался бы виден в тесте (какая-то картинка
+    есть), просто с недостаточным контрастом.
+    """
+    tk = pytest.importorskip("tkinter")
+    from longevity.storage import Storage
+
+    root = tk.Tk()
+    root.withdraw()
+    storage = Storage(tmp_path / "data.db")
+    try:
+        page = _build_page(root, storage)
+        page.goto_today()
+        today = dt.date.today()
+        other_day = page.week_start + dt.timedelta(days=(page.week_start.weekday() + 1) % 7)
+        if other_day == today:
+            other_day += dt.timedelta(days=1)
+        assert other_day != today and page.week_start <= other_day <= page.week_start + dt.timedelta(days=6)
+
+        storage.set_note(today.isoformat(), "заметка на сегодня")
+        storage.set_note(other_day.isoformat(), "заметка на другой день")
+        page.refresh()
+
+        today_idx = (today - page.week_start).days
+        other_idx = (other_day - page.week_start).days
+        today_header, _t1, _c1 = page.day_widgets[today_idx]
+        other_header, _t2, _c2 = page.day_widgets[other_idx]
+
+        light = str(page.theme.icon("note-light", 16))
+        dark = str(page.theme.icon("note", 16))
+
+        assert today_header.cget("image") == light, (
+            "сегодня фон тёмный (accent) — нужен светлый вариант иконки")
+        assert other_header.cget("image") == dark, (
+            "на светлом фоне обычного дня нужен тёмный вариант иконки")
+    finally:
+        storage.close()
+        root.destroy()

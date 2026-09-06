@@ -11,6 +11,13 @@ from .app import WEEKDAYS_FULL, fmt_day
 
 
 class CalendarPage(ttk.Frame):
+    #: Фон шапки обычного и выбранного дня — разовые оттенки этой страницы,
+    #: не входят в PALETTE (см. task-6-report). Иконка заметки на них тёмная
+    #: ("note"); в тестах на контраст (tests/test_icons.py) эти константы
+    #: читаются напрямую, чтобы смена цвета здесь не разошлась с проверкой.
+    HEADER_BG_DEFAULT = "#e5e7eb"
+    HEADER_BG_SELECTED = "#cffafe"
+
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
@@ -127,17 +134,25 @@ class CalendarPage(ttk.Frame):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
             note = week_notes.get(key)
+            is_today = day == today
+
+            # Фон "сегодня" (colors["accent"]) темнее, чем фон обычного и
+            # выбранного дня — тёмная иконка заметки на нём проваливается в
+            # контраст ниже 3:1 (WCAG AA для графики), поэтому там отдельный
+            # светлый вариант. Проверено tests/test_icons.py::
+            # test_note_icon_contrast_meets_wcag_aa.
             if note:
-                header.config(text=fmt_day(day), image=self.theme.icon("note", 16),
+                icon_name = "note-light" if is_today else "note"
+                header.config(text=fmt_day(day), image=self.theme.icon(icon_name, 16),
                               compound="right")
             else:
                 header.config(text=fmt_day(day), image="", compound="right")
-            if day == today:
+            if is_today:
                 header.config(bg=colors["accent"], fg=colors["card"])
             elif day == self.selected_day:
-                header.config(bg="#cffafe", fg="#134e4a")
+                header.config(bg=self.HEADER_BG_SELECTED, fg="#134e4a")
             else:
-                header.config(bg="#e5e7eb", fg=colors["text"])
+                header.config(bg=self.HEADER_BG_DEFAULT, fg=colors["text"])
 
             txt.config(state="normal")
             txt.delete("1.0", "end")

@@ -25,6 +25,28 @@ def pick_family(available: set[str]) -> str:
     return "TkDefaultFont"
 
 
+def _linearize(channel: float) -> float:
+    return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(hex_color: str) -> float:
+    """Относительная яркость по формуле WCAG 2.x, диапазон 0..1."""
+    h = hex_color.lstrip("#")
+    r, g, b = (_linearize(int(h[i:i + 2], 16) / 255) for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(color_a: str, color_b: str) -> float:
+    """Отношение контраста WCAG: (L_светлого + 0.05) / (L_тёмного + 0.05).
+
+    Не зависит от Tk и живого экрана — считается по формуле, а не проверяется
+    на глаз, поэтому смена палитры ловится тестом раньше, чем пользователем.
+    """
+    la, lb = relative_luminance(color_a), relative_luminance(color_b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 class Theme:
     def __init__(self, root):
         self._root = root
