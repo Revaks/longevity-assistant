@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from longevity.schedule import display_time, get_today_plan
-from longevity.text import analyze
+from longevity.text import analyze, tokenize
 
 from .app import WEEKDAYS, WEEKDAYS_FULL
 from .calendar_page import CalendarPage
@@ -31,10 +31,15 @@ CALENDAR_STEMS = {"календар", "недел"}
 
 #   analyze("mind") == ["mind"]
 #   analyze("питание") == ["питан"]
-#   analyze("меню") == ["мен"]
 #   analyze("еда") == ["еда"]
 #   analyze("есть") == ["ест"]
-NUTRITION_STEMS = {"mind", "питан", "мен", "еда", "ест"}
+NUTRITION_STEMS = {"mind", "питан", "еда", "ест"}
+
+# «меню» по основе не распознать: analyze("меню") == ["мен"] — ровно то же, что
+# у «меня» и «менее», из-за чего вопрос «у меня плохой сон» подмешивал в запрос
+# к модели весь блок правил диеты MIND. Слово несклоняемое, форма у него одна,
+# поэтому здесь оно сверяется целиком — по словоформе, а не по основе.
+NUTRITION_WORDS = {"меню"}
 
 
 class AssistantPage(ttk.Frame):
@@ -221,9 +226,9 @@ class AssistantPage(ttk.Frame):
             try:
                 fallback = self._answer(query)
             except Exception as exc2:
-                return (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
-                        f"⚠ Локальный поиск по базе знаний тоже не сработал: {exc2}")
-            return (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
+                return (f"Внимание: не удалось обратиться к Ollama: {exc}\n\n"
+                        f"Внимание: локальный поиск по базе знаний тоже не сработал: {exc2}")
+            return (f"Внимание: не удалось обратиться к Ollama: {exc}\n\n"
                     "Отвечаю по базе знаний:\n" + fallback)
 
     def _ollama_done(self, result: str):
@@ -237,6 +242,11 @@ class AssistantPage(ttk.Frame):
             self._unlock_input()
             self.thinking_status.config(text="")
 
+    def _is_about_nutrition(self, query: str) -> bool:
+        """Спрашивают ли про питание: по основам плюс словоформа «меню»."""
+        return bool(set(analyze(query)) & NUTRITION_STEMS
+                    or set(tokenize(query)) & NUTRITION_WORDS)
+
     def _build_ollama_prompt(self, query: str) -> str:
         terms = set(analyze(query))
         parts = []
@@ -246,7 +256,7 @@ class AssistantPage(ttk.Frame):
         for t in tips:
             parts.append(f"- {t.title} [{t.cat}]: {t.text} "
                          f"Когда: {t.sched}")
-        if terms & NUTRITION_STEMS:
+        if self._is_about_nutrition(query):
             good = "\n".join(f"- {g.name}: {g.amount} ({g.note})"
                              for g in self.app.content.mind_good)
             bad = "\n".join(f"- {g.name}: {g.amount}"
@@ -269,12 +279,15 @@ class AssistantPage(ttk.Frame):
     def _answer(self, query: str) -> str:
         terms = set(analyze(query))
 
-        # План на день / календарь
-        if terms & PLAN_STEMS:
-            return self._day_plan(dt.date.today())
-
+        # Недельные формулировки проверяются первыми: «расписание на неделю»
+        # подходит под оба набора сразу («расписан» — план, «недел» —
+        # календарь), и при обратном порядке такой вопрос отдавал план на
+        # один день. Более узкое требование (неделя, календарь) выигрывает.
         if terms & CALENDAR_STEMS:
             return self._week_plan()
+
+        if terms & PLAN_STEMS:
+            return self._day_plan(dt.date.today())
 
         tips = [hit.tip for hit in self.app.index.search(query, limit=4)]
         if not tips:

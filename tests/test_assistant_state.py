@@ -140,6 +140,57 @@ def test_worker_returns_safe_text_when_ollama_and_local_fallback_both_fail(page,
         assert str(button["state"]) == "normal"
 
 
+# -- распознавание темы вопроса --------------------------------------------
+
+def test_week_wording_wins_over_day_plan(page):
+    """«Расписание на неделю» — про неделю, а не про сегодня.
+
+    Вопрос подходит под оба набора основ сразу: «расписан» — план на день,
+    «недел» — календарь. Пока план проверялся первым, недельная формулировка
+    отдавала расписание одного дня.
+    """
+    answer = page._answer("расписание на неделю")
+
+    assert answer.startswith("Расписание на текущую неделю"), \
+        f"недельный вопрос отдал не недельный ответ: {answer.splitlines()[0]!r}"
+
+
+def test_day_wording_still_gives_the_day_plan(page):
+    """Обратная сторона перестановки: вопрос про день не должен уехать в неделю."""
+    answer = page._answer("план на сегодня")
+
+    assert answer.startswith("План на "), \
+        f"вопрос про день отдал не дневной план: {answer.splitlines()[0]!r}"
+    assert "Расписание на текущую неделю" not in answer
+
+
+def test_calendar_wording_gives_the_week(page):
+    assert page._answer("календарь").startswith("Расписание на текущую неделю")
+
+
+def test_menya_does_not_look_like_a_nutrition_question(page):
+    """«У меня плохой сон» — не вопрос про питание.
+
+    analyze("меню") == analyze("меня") == analyze("менее") == ["мен"], поэтому
+    основа «мен» в наборе тем питания подмешивала в запрос к модели весь блок
+    правил диеты MIND — на вопросе про сон в том числе.
+    """
+    assert not page._is_about_nutrition("у меня плохой сон")
+    assert not page._is_about_nutrition("мне менее понятно")
+    assert "Правила диеты MIND" not in page._build_ollama_prompt("у меня плохой сон")
+
+
+def test_menu_question_still_pulls_the_mind_rules(page):
+    """При этом само «меню» темой питания быть не перестало."""
+    assert page._is_about_nutrition("составь меню на неделю")
+    assert "Правила диеты MIND" in page._build_ollama_prompt("составь меню на неделю")
+
+
+def test_plain_nutrition_words_still_recognised(page):
+    for query in ("что есть, чтобы жить дольше", "правила питания", "диета mind"):
+        assert page._is_about_nutrition(query), f"«{query}» перестал быть вопросом про питание"
+
+
 def test_closing_window_during_answer_does_not_crash_background_thread(tk, tmp_path, monkeypatch):
     """Окно закрыли, пока модель думает — самый вероятный момент закрытия.
 
