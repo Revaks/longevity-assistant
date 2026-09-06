@@ -2,8 +2,7 @@ import pytest
 
 
 @pytest.fixture
-def page(tmp_path, monkeypatch):
-    tk = pytest.importorskip("tkinter")
+def page(tk, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     from longevity.content import load_content
     from longevity.search import SearchIndex

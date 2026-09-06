@@ -9,8 +9,6 @@
 import datetime as dt
 from types import SimpleNamespace
 
-import pytest
-
 
 def _build_page(root, storage):
     from longevity.content import load_content
@@ -22,8 +20,7 @@ def _build_page(root, storage):
     return CalendarPage(root, app)
 
 
-def test_note_icon_tracks_note_presence(tmp_path):
-    tk = pytest.importorskip("tkinter")
+def test_note_icon_tracks_note_presence(tk, tmp_path):
     from longevity.storage import Storage
 
     root = tk.Tk()
@@ -50,7 +47,7 @@ def test_note_icon_tracks_note_presence(tmp_path):
         root.destroy()
 
 
-def test_today_header_uses_light_variant_other_days_use_dark(tmp_path):
+def test_today_header_uses_light_variant_other_days_use_dark(tk, tmp_path):
     """Не просто "иконка есть", а именно тот вариант, который читаем на фоне.
 
     Фон "сегодня" темнее фона остальных дней (contrast_ratio проверяет это
@@ -60,7 +57,6 @@ def test_today_header_uses_light_variant_other_days_use_dark(tmp_path):
     незамеченной: индикатор остался бы виден в тесте (какая-то картинка
     есть), просто с недостаточным контрастом.
     """
-    tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
 
     root = tk.Tk()

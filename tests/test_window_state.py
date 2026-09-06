@@ -2,14 +2,10 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 
-def test_saved_window_size_is_applied():
+def test_saved_window_size_is_applied(tk):
     """Сохранённый размер применяется в вызове geometry() при создании."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -46,9 +42,8 @@ def test_saved_window_size_is_applied():
             storage.close()
 
 
-def test_oversized_saved_size_is_clamped():
+def test_oversized_saved_size_is_clamped(tk):
     """Размер, снятый с большего экрана, ужимается до 95% текущего экрана."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -98,9 +93,8 @@ def test_oversized_saved_size_is_clamped():
             storage.close()
 
 
-def test_corrupted_size_uses_default():
+def test_corrupted_size_uses_default(tk):
     """Испорченное значение размера игнорируется, используется default."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -142,9 +136,8 @@ def test_corrupted_size_uses_default():
             storage.close()
 
 
-def test_saved_active_page_is_applied():
+def test_saved_active_page_is_applied(tk):
     """Сохранённая активная вкладка открывается при создании приложения."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -171,9 +164,8 @@ def test_saved_active_page_is_applied():
             storage.close()
 
 
-def test_unknown_active_page_defaults_to_calendar():
+def test_unknown_active_page_defaults_to_calendar(tk):
     """Несуществующая вкладка игнорируется, открывается календарь по умолчанию."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -200,9 +192,8 @@ def test_unknown_active_page_defaults_to_calendar():
             storage.close()
 
 
-def test_hidden_window_does_not_corrupt_saved_size():
+def test_hidden_window_does_not_corrupt_saved_size(tk):
     """Закрытие скрытого окна не портит ранее сохранённый размер."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
@@ -272,9 +263,8 @@ def test_hidden_window_does_not_corrupt_saved_size():
             storage.close()
 
 
-def test_window_size_saved_with_negative_coordinate():
+def test_window_size_saved_with_negative_coordinate(tk):
     """Размер окна сохраняется корректно при отрицательной X-координате."""
-    tk = pytest.importorskip("tkinter")
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage

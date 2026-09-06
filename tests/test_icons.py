@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 ICONS = Path(__file__).resolve().parent.parent / "longevity" / "data" / "icons"
 NAMES = ("calendar", "nutrition", "knowledge", "assistant", "note", "clock")
 
@@ -24,8 +22,7 @@ def test_generator_is_committed():
         "генератор должен остаться в репозитории, чтобы иконки можно было перерисовать")
 
 
-def test_theme_loads_icons():
-    tk = pytest.importorskip("tkinter")
+def test_theme_loads_icons(tk):
     from ui.theme import Theme
 
     root = tk.Tk()

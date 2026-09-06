@@ -32,9 +32,8 @@ def test_choose_model_empty_available_returns_empty_string():
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tk, tmp_path):
     """Скрытый корень + хранилище + пустой ModelStore на них (без опроса)."""
-    tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
     from ui.theme import Theme
     from ui.widgets import ModelStore
@@ -89,9 +88,8 @@ def test_apply_with_no_models_marks_store_unavailable(env):
     assert store.models == []
 
 
-def test_works_without_storage():
+def test_works_without_storage(tk):
     """storage=None не должен ронять store — так уже жили страницы раньше."""
-    tk = pytest.importorskip("tkinter")
     from ui.widgets import ModelStore
 
     root = tk.Tk()
@@ -104,9 +102,8 @@ def test_works_without_storage():
         root.destroy()
 
 
-def test_selection_persists_across_a_new_store_instance(tmp_path):
+def test_selection_persists_across_a_new_store_instance(tk, tmp_path):
     """Смена модели видна следующему store — как при перезапуске приложения."""
-    tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
     from ui.widgets import ModelStore
 
@@ -253,13 +250,12 @@ def test_creating_two_bars_polls_the_service_only_once(monkeypatch, env):
 
 # -- Требование ревью 3: закрытие окна во время опроса не роняет поток -----
 
-def test_closing_window_during_poll_does_not_crash_background_thread(monkeypatch, tmp_path):
+def test_closing_window_during_poll_does_not_crash_background_thread(tk, monkeypatch, tmp_path):
     """Живой баг, воспроизведённый ревью: self.after(...) из фонового потока,
     вызванный после того как окно уже уничтожено, около секунды пытается
     достучаться до исчезнувшего цикла событий и затем бросает
     RuntimeError('main thread is not in main loop'). Поток обязан проглотить
     эту ошибку сам — иначе она долетает до threading.excepthook."""
-    tk = pytest.importorskip("tkinter")
     from longevity.storage import Storage
     from ui.widgets import ModelStore
 
