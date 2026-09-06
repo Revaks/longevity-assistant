@@ -43,6 +43,7 @@ class AssistantPage(ttk.Frame):
         self.theme = self.app.theme
         self.models = ollama_models()
         self.use_ollama_var = tk.BooleanVar(value=bool(self.models))
+        self._busy = False
         self._build()
         self._greet()
 
@@ -65,12 +66,14 @@ class AssistantPage(ttk.Frame):
         quick_frame.pack(fill="x", padx=12)
         tk.Label(quick_frame, text="Быстрые вопросы:", bg=colors["bg"], fg=colors["muted"]).grid(
             row=0, column=0, rowspan=2, sticky="w", padx=(0, 4))
+        self.quick_buttons = []
         for n, q in enumerate(self.app.content.quick_questions):
             btn = tk.Button(quick_frame, text=q, relief="groove", bd=1,
                             bg=colors["card"], fg=colors["text"], cursor="hand2",
                             activebackground="#ccfbf1",
                             command=lambda text=q: self.send_question(text))
             btn.grid(row=n // 4, column=1 + n % 4, sticky="ew", padx=2, pady=2)
+            self.quick_buttons.append(btn)
         quick_frame.columnconfigure(1, weight=1)
         quick_frame.columnconfigure(2, weight=1)
         quick_frame.columnconfigure(3, weight=1)
@@ -101,8 +104,9 @@ class AssistantPage(ttk.Frame):
         self.entry = ttk.Entry(input_frame, font=self.theme.font(11))
         self.entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.entry.bind("<Return>", lambda e: self.send_question())
-        ttk.Button(input_frame, text="Спросить",
-                   command=self.send_question).pack(side="right")
+        self.ask_button = ttk.Button(input_frame, text="Спросить",
+                                     command=self.send_question)
+        self.ask_button.pack(side="right")
 
     def _greet(self):
         text = ("Здравствуйте! Я — ассистент по книге Алексея Москалева "
@@ -135,7 +139,23 @@ class AssistantPage(ttk.Frame):
         self.chat.config(state="disabled")
         self._append("Ассистент", answer, is_user=False)
 
+    def _lock_input(self):
+        self._busy = True
+        self.entry.config(state="disabled")
+        self.ask_button.config(state="disabled")
+        for button in self.quick_buttons:
+            button.config(state="disabled")
+
+    def _unlock_input(self):
+        self._busy = False
+        self.entry.config(state="normal")
+        self.ask_button.config(state="normal")
+        for button in self.quick_buttons:
+            button.config(state="normal")
+
     def send_question(self, text: str = None):
+        if self._busy:
+            return
         if text is None:
             text = self.entry.get().strip()
         if not text:
@@ -151,7 +171,7 @@ class AssistantPage(ttk.Frame):
     # -- Ollama --------------------------------------------------------
     def _answer_ollama_async(self, query: str):
         model = self.model_var.get()
-        self.entry.config(state="disabled")
+        self._lock_input()
         self.ollama_status.config(text="Думаю...")
         self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
         prompt = self._build_ollama_prompt(query)
@@ -169,7 +189,7 @@ class AssistantPage(ttk.Frame):
 
     def _ollama_done(self, result: str):
         self._finish_pending(result)
-        self.entry.config(state="normal")
+        self._unlock_input()
         self.ollama_status.config(text="")
 
     def _build_ollama_prompt(self, query: str) -> str:
