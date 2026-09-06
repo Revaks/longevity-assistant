@@ -81,7 +81,8 @@ class LongevityApp(tk.Tk):
                            ("nutrition", "Питание"),
                            ("knowledge", "База знаний"),
                            ("assistant", "Ассистент")):
-            btn = tk.Button(sidebar, text=label, anchor="w", relief="flat",
+            btn = tk.Button(sidebar, text=label, image=self.theme.icon(key, 16),
+                            compound="left", anchor="w", relief="flat",
                             bg=colors["sidebar"], fg=colors["card"], font=self.theme.font(11),
                             activebackground=colors["sidebar_active"],
                             activeforeground=colors["card"],

@@ -126,7 +126,12 @@ class CalendarPage(ttk.Frame):
         for i, (header, txt, _col) in enumerate(self.day_widgets):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
-            header.config(text=fmt_day(day))
+            note = week_notes.get(key)
+            if note:
+                header.config(text=fmt_day(day), image=self.theme.icon("note", 16),
+                              compound="right")
+            else:
+                header.config(text=fmt_day(day), image="", compound="right")
             if day == today:
                 header.config(bg=colors["accent"], fg=colors["card"])
             elif day == self.selected_day:
@@ -144,7 +149,6 @@ class CalendarPage(ttk.Frame):
                                   font=self.theme.font(9, "bold"))
                 txt.insert("end", f"{display_time(it)}  ", "time")
                 txt.insert("end", it.title + "\n", tag)
-            note = week_notes.get(key)
             if note:
                 txt.insert("end", "\n" + note + "\n", "note")
                 txt.tag_configure("note", foreground="#92400e",
