@@ -172,25 +172,55 @@ class AssistantPage(ttk.Frame):
     def _answer_ollama_async(self, query: str):
         model = self.model_var.get()
         self._lock_input()
-        self.ollama_status.config(text="Думаю...")
-        self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
-        prompt = self._build_ollama_prompt(query)
+        # Синхронный участок до старта потока тоже может упасть (например,
+        # сборка промпта или поиск по индексу внутри неё) — если это
+        # произойдёт, поток так и не запустится и разблокировать ввод
+        # будет некому, кроме нас самих здесь.
+        try:
+            self.ollama_status.config(text="Думаю...")
+            self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
+            prompt = self._build_ollama_prompt(query)
+        except Exception:
+            self._unlock_input()
+            raise
 
         def work():
-            try:
-                resp = ask_ollama(model, prompt)
-                result = resp if resp else "Пустой ответ модели."
-            except Exception as exc:
-                result = (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
-                          "Отвечаю по базе знаний:\n" + self._answer(query))
+            result = self._ollama_answer_or_fallback(model, prompt, query)
             self.after(0, lambda: self._ollama_done(result))
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _ollama_answer_or_fallback(self, model: str, prompt: str, query: str) -> str:
+        """Выполняется в фоновом потоке — не должна бросать исключений.
+
+        Если бросит, `work()` умрёт до вызова `self.after(...)`, и
+        разблокировать интерфейс станет некому. Поэтому здесь нет
+        необработанного пути: сбой самой Ollama, а следом и запасного
+        локального поиска — оба перехватываются и превращаются в текст
+        ответа, а не в исключение.
+        """
+        try:
+            resp = ask_ollama(model, prompt)
+            return resp if resp else "Пустой ответ модели."
+        except Exception as exc:
+            try:
+                fallback = self._answer(query)
+            except Exception as exc2:
+                return (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
+                        f"⚠ Локальный поиск по базе знаний тоже не сработал: {exc2}")
+            return (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
+                    "Отвечаю по базе знаний:\n" + fallback)
+
     def _ollama_done(self, result: str):
-        self._finish_pending(result)
-        self._unlock_input()
-        self.ollama_status.config(text="")
+        # Вставка ответа в чат — та самая операция с меткой pending_start,
+        # ради которой всё затевалось; если она упадёт, разблокировка всё
+        # равно обязана произойти, поэтому она в finally, а не следующей
+        # строкой после потенциально падающего вызова.
+        try:
+            self._finish_pending(result)
+        finally:
+            self._unlock_input()
+            self.ollama_status.config(text="")
 
     def _build_ollama_prompt(self, query: str) -> str:
         terms = set(analyze(query))
