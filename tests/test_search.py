@@ -94,6 +94,16 @@ def test_limit_is_respected(index):
     assert len(index.search("питание", limit=3)) <= 3
 
 
+def test_zero_limit_returns_nothing(index):
+    """Ноль — это «ничего», а не «всё».
+
+    Прежнее `hits[:limit] if limit else hits` считало ноль ложью и отдавало
+    всю выдачу — ровно наоборот тому, о чём просили.
+    """
+    assert index.search("питание", limit=0) == []
+    assert len(index.search("питание", limit=None)) == len(index.search("питание"))
+
+
 def test_returns_hit_objects(index):
     hit = index.search("зелёный чай")[0]
 

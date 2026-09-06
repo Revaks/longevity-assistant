@@ -25,8 +25,11 @@ def test_documents_architecture():
     text = README.read_text(encoding="utf-8")
 
     for module in ("longevity/content.py", "longevity/storage.py",
-                   "longevity/paths.py", "longevity/schedule.py"):
-        assert module in text
+                   "longevity/paths.py", "longevity/schedule.py",
+                   "longevity/search.py",
+                   # созданы фазой 2: общая тема и общие виджеты
+                   "ui/theme.py", "ui/widgets.py"):
+        assert module in text, f"раздел архитектуры не упоминает {module}"
 
 
 def test_states_zero_dependencies():

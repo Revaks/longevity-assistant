@@ -96,4 +96,7 @@ class SearchIndex:
                 hits.append(Hit(tip=tip, score=score))
 
         hits.sort(key=lambda h: (-h.score, h.tip.id))
-        return hits[:limit] if limit else hits
+        # limit=0 — это «ничего не показывать», а не «показать всё»: снять
+        # ограничение можно только limit=None (DEFAULT_LIMIT). Прежнее `if
+        # limit` считало ноль ложью и возвращало всю выдачу целиком.
+        return hits if limit is None else hits[:limit]
