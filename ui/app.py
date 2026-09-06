@@ -9,16 +9,11 @@ from longevity.content import Content
 from longevity.search import SearchIndex
 from longevity.storage import Storage
 
+from .theme import Theme
+
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 WEEKDAYS_FULL = ["Понедельник", "Вторник", "Среда", "Четверг",
                  "Пятница", "Суббота", "Воскресенье"]
-
-BG = "#f4f5f7"
-SIDEBAR_BG = "#1f2937"
-SIDEBAR_ACTIVE = "#374151"
-ACCENT = "#0f766e"
-TEXT_FG = "#111827"
-MUTED = "#6b7280"
 
 
 def fmt_day(day: dt.date) -> str:
@@ -34,11 +29,12 @@ class LongevityApp(tk.Tk):
         self.content = content
         self.index = index
         self.storage = storage
+        self.theme = Theme(self)
 
         self.title(self.content.app_title)
         self.geometry("1280x820")
         self.minsize(1080, 700)
-        self.configure(bg=BG)
+        self.configure(bg=self.theme.colors["bg"])
 
         self._configure_styles()
         self._build_sidebar()
@@ -56,53 +52,55 @@ class LongevityApp(tk.Tk):
         self.destroy()
 
     def _configure_styles(self):
+        colors = self.theme.colors
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("Page.TFrame", background=BG)
-        style.configure("TButton", font=("Noto Sans", 10))
-        style.configure("TEntry", font=("Noto Sans", 10))
-        style.configure("Treeview", font=("Noto Sans", 10), rowheight=26)
-        style.configure("Treeview.Heading", font=("Noto Sans", 10, "bold"))
+        style.configure("Page.TFrame", background=colors["bg"])
+        style.configure("TButton", font=self.theme.font(10))
+        style.configure("TEntry", font=self.theme.font(10))
+        style.configure("Treeview", font=self.theme.font(10), rowheight=26)
+        style.configure("Treeview.Heading", font=self.theme.font(10, "bold"))
 
     def _build_sidebar(self):
-        sidebar = tk.Frame(self, bg=SIDEBAR_BG, width=190)
+        colors = self.theme.colors
+        sidebar = tk.Frame(self, bg=colors["sidebar"], width=190)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
-        tk.Label(sidebar, text="🕰", bg=SIDEBAR_BG, fg="white",
-                 font=("Noto Sans", 26)).pack(pady=(18, 0))
-        tk.Label(sidebar, text=self.content.app_title, bg=SIDEBAR_BG, fg="white",
-                 font=("Noto Sans", 11, "bold"), wraplength=170,
-                 justify="center").pack(pady=(4, 2))
-        tk.Label(sidebar, text="А. А. Москалев\n«120 лет жизни»", bg=SIDEBAR_BG,
-                 fg="#9ca3af", font=("Noto Sans", 8), justify="center").pack(pady=(0, 14))
+        tk.Label(sidebar, text=self.content.app_title, bg=colors["sidebar"],
+                 fg=colors["card"], font=self.theme.font(11, "bold"), wraplength=170,
+                 justify="center").pack(pady=(18, 2))
+        tk.Label(sidebar, text="А. А. Москалев\n«120 лет жизни»", bg=colors["sidebar"],
+                 fg="#9ca3af", font=self.theme.font(8), justify="center").pack(pady=(0, 14))
 
         self.nav_buttons = {}
-        for key, label in (("calendar", "📅 Календарь"),
-                           ("nutrition", "🥗 Питание"),
-                           ("knowledge", "📚 База знаний"),
-                           ("assistant", "🤖 Ассистент")):
+        for key, label in (("calendar", "Календарь"),
+                           ("nutrition", "Питание"),
+                           ("knowledge", "База знаний"),
+                           ("assistant", "Ассистент")):
             btn = tk.Button(sidebar, text=label, anchor="w", relief="flat",
-                            bg=SIDEBAR_BG, fg="white", font=("Noto Sans", 11),
-                            activebackground=SIDEBAR_ACTIVE, activeforeground="white",
+                            bg=colors["sidebar"], fg=colors["card"], font=self.theme.font(11),
+                            activebackground=colors["sidebar_active"],
+                            activeforeground=colors["card"],
                             bd=0, padx=16, pady=12, cursor="hand2",
                             command=lambda k=key: self.show_page(k))
             btn.pack(fill="x")
             self.nav_buttons[key] = btn
 
-        tk.Label(sidebar, text="", bg=SIDEBAR_BG).pack(expand=True)
+        tk.Label(sidebar, text="", bg=colors["sidebar"]).pack(expand=True)
 
     def _build_header(self):
-        header = tk.Frame(self, bg=BG)
+        colors = self.theme.colors
+        header = tk.Frame(self, bg=colors["bg"])
         header.pack(fill="x", padx=16, pady=(12, 0))
-        self.page_title = tk.Label(header, text="", bg=BG, fg=TEXT_FG,
-                                   font=("Noto Sans", 15, "bold"))
+        self.page_title = tk.Label(header, text="", bg=colors["bg"], fg=colors["text"],
+                                   font=self.theme.font(15, "bold"))
         self.page_title.pack(side="left")
-        tk.Label(header, text=self.content.app_subtitle, bg=BG, fg=MUTED,
-                 font=("Noto Sans", 9)).pack(side="left", padx=12)
+        tk.Label(header, text=self.content.app_subtitle, bg=colors["bg"], fg=colors["muted"],
+                 font=self.theme.font(9)).pack(side="left", padx=12)
 
     def _build_pages(self):
         # Импорт страниц отложен до вызова: ui/app.py и ui/*_page.py взаимно
@@ -131,8 +129,9 @@ class LongevityApp(tk.Tk):
         self.show_page("calendar")
 
     def _build_statusbar(self):
-        bar = tk.Label(self, text=self.content.disclaimer, bg="#e5e7eb", fg=MUTED,
-                       anchor="w", padx=10, pady=4, font=("Noto Sans", 8))
+        bar = tk.Label(self, text=self.content.disclaimer, bg="#e5e7eb",
+                       fg=self.theme.colors["muted"],
+                       anchor="w", padx=10, pady=4, font=self.theme.font(8))
         bar.pack(side="bottom", fill="x")
 
     def show_page(self, key: str):
@@ -146,6 +145,6 @@ class LongevityApp(tk.Tk):
                 page.tkraise()
         for k, btn in self.nav_buttons.items():
             if k == key:
-                btn.config(bg=SIDEBAR_ACTIVE)
+                btn.config(bg=self.theme.colors["sidebar_active"])
             else:
-                btn.config(bg=SIDEBAR_BG)
+                btn.config(bg=self.theme.colors["sidebar"])

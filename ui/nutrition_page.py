@@ -8,7 +8,6 @@ from tkinter import ttk
 
 from longevity.content import MenuDay
 
-from .app import BG, MUTED, TEXT_FG
 from .ollama import ask_ollama, ollama_models
 
 
@@ -16,17 +15,21 @@ class NutritionPage(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
+        self.theme = self.app.theme
         self.models = ollama_models()
         self._build()
         self._fill_menu(self.app.content.menu)
 
     def _build(self):
+        colors = self.theme.colors
         # Верхняя панель: модель Ollama + генерация меню
         top = ttk.Frame(self, style="Page.TFrame")
         top.pack(fill="x", padx=12, pady=(12, 6))
-        tk.Label(top, text="🥗 Диета MIND + принципы питания Москалева",
-                 bg=BG, fg=TEXT_FG, font=("Noto Sans", 12, "bold")).pack(side="left")
-        tk.Label(top, text="Модель:", bg=BG, fg=MUTED).pack(side="left", padx=(18, 4))
+        tk.Label(top, text="Диета MIND + принципы питания Москалева",
+                 bg=colors["bg"], fg=colors["text"],
+                 font=self.theme.font(12, "bold")).pack(side="left")
+        tk.Label(top, text="Модель:", bg=colors["bg"], fg=colors["muted"]).pack(
+            side="left", padx=(18, 4))
         self.model_var = tk.StringVar(value=self.models[0] if self.models else "")
         if self.models:
             combo = ttk.Combobox(top, textvariable=self.model_var, state="readonly",
@@ -39,7 +42,8 @@ class NutritionPage(ttk.Frame):
                                   command=self.generate_menu_ollama)
         self.gen_btn.pack(side="left", padx=6)
         self.status_var = tk.StringVar(value="")
-        tk.Label(top, textvariable=self.status_var, bg=BG, fg=MUTED).pack(side="left", padx=6)
+        tk.Label(top, textvariable=self.status_var, bg=colors["bg"], fg=colors["muted"]).pack(
+            side="left", padx=6)
 
         # Таблица недельного меню
         table_frame = ttk.Frame(self, style="Page.TFrame")
@@ -62,10 +66,10 @@ class NutritionPage(ttk.Frame):
 
         # Правила MIND
         rules = tk.Text(self, height=10, wrap="word", relief="groove", bd=1,
-                        padx=10, pady=8, font=("Noto Sans", 9),
-                        bg="white", fg=TEXT_FG, state="disabled")
+                        padx=10, pady=8, font=self.theme.font(9),
+                        bg=colors["card"], fg=colors["text"], state="disabled")
         rules.pack(fill="x", padx=12, pady=(6, 12))
-        rules.tag_configure("h", foreground="#0f766e", font=("Noto Sans", 10, "bold"))
+        rules.tag_configure("h", foreground=colors["accent"], font=self.theme.font(10, "bold"))
         rules.tag_configure("good", foreground="#2e7d32")
         rules.tag_configure("bad", foreground="#b91c1c")
         rules.config(state="normal")
@@ -93,7 +97,7 @@ class NutritionPage(ttk.Frame):
             self.status_var.set("Ollama недоступна — показано базовое меню MIND.")
             self._fill_menu(self.app.content.menu)
             return
-        self.status_var.set(f"⏳ Генерирую меню ({model})...")
+        self.status_var.set(f"Генерирую меню ({model})...")
         self.gen_btn.config(state="disabled")
         prompt = (
             "Ты — диетолог. Составь недельное меню (7 дней) по диете MIND, "

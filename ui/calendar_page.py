@@ -7,13 +7,14 @@ from tkinter import messagebox, ttk
 
 from longevity.schedule import display_time, get_today_plan
 
-from .app import BG, MUTED, TEXT_FG, WEEKDAYS_FULL, fmt_day
+from .app import WEEKDAYS_FULL, fmt_day
 
 
 class CalendarPage(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
+        self.theme = self.app.theme
         self.storage = self.app.storage
         self.week_start = self._monday(dt.date.today())
         self.selected_day = dt.date.today()
@@ -24,6 +25,8 @@ class CalendarPage(ttk.Frame):
         return d - dt.timedelta(days=d.weekday())
 
     def _build(self):
+        colors = self.theme.colors
+
         # Верхняя панель навигации
         nav = ttk.Frame(self, style="Page.TFrame")
         nav.pack(fill="x", padx=12, pady=(12, 6))
@@ -34,15 +37,15 @@ class CalendarPage(ttk.Frame):
         self.btn_next = ttk.Button(nav, text="▶", width=4, command=self.next_week)
         self.btn_next.pack(side="left")
 
-        self.week_label = tk.Label(nav, text="", font=("Noto Sans", 13, "bold"),
-                                   bg=BG, fg=TEXT_FG)
+        self.week_label = tk.Label(nav, text="", font=self.theme.font(13, "bold"),
+                                   bg=colors["bg"], fg=colors["text"])
         self.week_label.pack(side="left", padx=16)
 
         legend = ttk.Frame(nav, style="Page.TFrame")
         legend.pack(side="right")
         for cat, color in self.app.content.cat_colors.items():
-            tk.Label(legend, text="●", fg=color, bg=BG).pack(side="left", padx=(8, 1))
-            tk.Label(legend, text=cat, bg=BG, fg=MUTED).pack(side="left")
+            tk.Label(legend, text="●", fg=color, bg=colors["bg"]).pack(side="left", padx=(8, 1))
+            tk.Label(legend, text=cat, bg=colors["bg"], fg=colors["muted"]).pack(side="left")
 
         # Сетка дней недели
         self.grid_frame = ttk.Frame(self, style="Page.TFrame")
@@ -53,13 +56,13 @@ class CalendarPage(ttk.Frame):
             col = ttk.Frame(self.grid_frame, style="Page.TFrame")
             col.grid(row=0, column=i, sticky="nsew", padx=2)
             self.grid_frame.columnconfigure(i, weight=1)
-            header = tk.Label(col, text="", font=("Noto Sans", 10, "bold"),
+            header = tk.Label(col, text="", font=self.theme.font(10, "bold"),
                               pady=6, relief="groove", bd=1)
             header.pack(fill="x")
             txt = tk.Text(col, height=24, wrap="word", cursor="hand2",
                           relief="groove", bd=1, padx=6, pady=6,
-                          font=("Noto Sans", 9), state="disabled",
-                          bg="white", fg=TEXT_FG)
+                          font=self.theme.font(9), state="disabled",
+                          bg=colors["card"], fg=colors["text"])
             txt.pack(fill="both", expand=True)
             header.bind("<Button-1>", lambda e, idx=i: self._on_col_click(idx))
             txt.bind("<Button-1>", lambda e, idx=i: self._on_col_click(idx))
@@ -68,17 +71,18 @@ class CalendarPage(ttk.Frame):
 
         # Нижняя панель с деталями выбранного дня
         self.detail = tk.Text(self, height=8, wrap="word", relief="groove", bd=1,
-                              padx=10, pady=8, font=("Noto Sans", 10),
-                              bg="#ffffff", fg=TEXT_FG, state="disabled")
+                              padx=10, pady=8, font=self.theme.font(10),
+                              bg=colors["card"], fg=colors["text"], state="disabled")
         self.detail.pack(fill="x", padx=12, pady=(6, 6))
 
         # Панель заметок на выбранный день
         notes_bar = ttk.Frame(self, style="Page.TFrame")
         notes_bar.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Label(notes_bar, text="📝 Заметка на день:", bg=BG, fg=TEXT_FG).pack(side="left")
+        tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
+                 fg=colors["text"]).pack(side="left")
         self.note_var = tk.StringVar()
         self.note_entry = ttk.Entry(notes_bar, textvariable=self.note_var,
-                                    font=("Noto Sans", 10))
+                                    font=self.theme.font(10))
         self.note_entry.pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(notes_bar, text="Сохранить",
                    command=self._save_note).pack(side="left", padx=2)
@@ -107,6 +111,7 @@ class CalendarPage(ttk.Frame):
 
     # -- отрисовка -----------------------------------------------------
     def refresh(self):
+        colors = self.theme.colors
         today = dt.date.today()
         sunday = self.week_start + dt.timedelta(days=6)
         self.week_label.config(
@@ -121,14 +126,13 @@ class CalendarPage(ttk.Frame):
         for i, (header, txt, _col) in enumerate(self.day_widgets):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
-            note_mark = " 📝" if week_notes.get(key) else ""
-            header.config(text=fmt_day(day) + note_mark)
+            header.config(text=fmt_day(day))
             if day == today:
-                header.config(bg="#0f766e", fg="white")
+                header.config(bg=colors["accent"], fg=colors["card"])
             elif day == self.selected_day:
                 header.config(bg="#cffafe", fg="#134e4a")
             else:
-                header.config(bg="#e5e7eb", fg=TEXT_FG)
+                header.config(bg="#e5e7eb", fg=colors["text"])
 
             txt.config(state="normal")
             txt.delete("1.0", "end")
@@ -137,15 +141,15 @@ class CalendarPage(ttk.Frame):
                 color = self.app.content.cat_colors.get(it.cat, "#333333")
                 tag = f"cat{i}_{it.cat.replace(' ', '')}"
                 txt.tag_configure(tag, foreground=color,
-                                  font=("Noto Sans", 9, "bold"))
+                                  font=self.theme.font(9, "bold"))
                 txt.insert("end", f"{display_time(it)}  ", "time")
                 txt.insert("end", it.title + "\n", tag)
             note = week_notes.get(key)
             if note:
-                txt.insert("end", "\n📝 " + note + "\n", "note")
+                txt.insert("end", "\n" + note + "\n", "note")
                 txt.tag_configure("note", foreground="#92400e",
-                                  font=("Noto Sans", 9, "italic"))
-            txt.tag_configure("time", foreground=MUTED, font=("Noto Sans", 9))
+                                  font=self.theme.font(9, slant="italic"))
+            txt.tag_configure("time", foreground=colors["muted"], font=self.theme.font(9))
             txt.config(state="disabled")
 
         self._show_day_detail()
@@ -176,22 +180,23 @@ class CalendarPage(ttk.Frame):
         self.refresh()
 
     def _show_day_detail(self):
+        colors = self.theme.colors
         self.detail.config(state="normal")
         self.detail.delete("1.0", "end")
         day = self.selected_day
         items = get_today_plan(self.app.content, day)
         self.detail.insert("end", f"{WEEKDAYS_FULL[day.weekday()]}, "
                                   f"{day.day:02d}.{day.month:02d}.{day.year}\n", "h")
-        self.detail.tag_configure("h", font=("Noto Sans", 11, "bold"))
+        self.detail.tag_configure("h", font=self.theme.font(11, "bold"))
         for it in items:
             color = self.app.content.cat_colors.get(it.cat, "#333333")
             tag = "d_" + it.cat.replace(" ", "")
             self.detail.tag_configure(tag, foreground=color,
-                                      font=("Noto Sans", 10, "bold"))
+                                      font=self.theme.font(10, "bold"))
             self.detail.insert("end", f"\n{display_time(it)} — {it.title} ", tag)
             self.detail.insert("end", f"({it.cat})\n", "cat")
             if it.detail:
                 self.detail.insert("end", it.detail + "\n", "det")
-        self.detail.tag_configure("cat", foreground=MUTED)
+        self.detail.tag_configure("cat", foreground=colors["muted"])
         self.detail.tag_configure("det", foreground="#374151")
         self.detail.config(state="disabled")

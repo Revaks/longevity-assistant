@@ -9,7 +9,7 @@ from tkinter import ttk
 from longevity.schedule import display_time, get_today_plan
 from longevity.text import analyze
 
-from .app import BG, MUTED, TEXT_FG, WEEKDAYS, WEEKDAYS_FULL
+from .app import WEEKDAYS, WEEKDAYS_FULL
 from .calendar_page import CalendarPage
 from .ollama import ask_ollama, ollama_models
 
@@ -40,32 +40,34 @@ class AssistantPage(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master, style="Page.TFrame")
         self.app = app
+        self.theme = self.app.theme
         self.models = ollama_models()
         self.use_ollama_var = tk.BooleanVar(value=bool(self.models))
         self._build()
         self._greet()
 
     def _build(self):
+        colors = self.theme.colors
         self.chat = tk.Text(self, wrap="word", relief="groove", bd=1,
-                            padx=10, pady=8, font=("Noto Sans", 10),
-                            bg="white", fg=TEXT_FG, state="disabled")
+                            padx=10, pady=8, font=self.theme.font(10),
+                            bg=colors["card"], fg=colors["text"], state="disabled")
         self.chat.pack(fill="both", expand=True, padx=12, pady=(12, 6))
         self.chat.tag_configure("user", foreground="#1d4ed8",
-                                font=("Noto Sans", 10, "bold"))
-        self.chat.tag_configure("bot", foreground="#0f766e",
-                                font=("Noto Sans", 10, "bold"))
-        self.chat.tag_configure("title", foreground="#111827",
-                                font=("Noto Sans", 10, "bold"))
-        self.chat.tag_configure("src", foreground=MUTED,
-                                font=("Noto Sans", 8))
+                                font=self.theme.font(10, "bold"))
+        self.chat.tag_configure("bot", foreground=colors["accent"],
+                                font=self.theme.font(10, "bold"))
+        self.chat.tag_configure("title", foreground=colors["text"],
+                                font=self.theme.font(10, "bold"))
+        self.chat.tag_configure("src", foreground=colors["muted"],
+                                font=self.theme.font(8))
 
         quick_frame = ttk.Frame(self, style="Page.TFrame")
         quick_frame.pack(fill="x", padx=12)
-        tk.Label(quick_frame, text="Быстрые вопросы:", bg=BG, fg=MUTED).grid(
+        tk.Label(quick_frame, text="Быстрые вопросы:", bg=colors["bg"], fg=colors["muted"]).grid(
             row=0, column=0, rowspan=2, sticky="w", padx=(0, 4))
         for n, q in enumerate(self.app.content.quick_questions):
             btn = tk.Button(quick_frame, text=q, relief="groove", bd=1,
-                            bg="white", fg=TEXT_FG, cursor="hand2",
+                            bg=colors["card"], fg=colors["text"], cursor="hand2",
                             activebackground="#ccfbf1",
                             command=lambda text=q: self.send_question(text))
             btn.grid(row=n // 4, column=1 + n % 4, sticky="ew", padx=2, pady=2)
@@ -81,7 +83,8 @@ class AssistantPage(ttk.Frame):
             ollama_bar, text="Использовать локальную нейросеть Ollama",
             variable=self.use_ollama_var)
         self.ollama_check.pack(side="left")
-        tk.Label(ollama_bar, text="Модель:", bg=BG, fg=MUTED).pack(side="left", padx=(10, 4))
+        tk.Label(ollama_bar, text="Модель:", bg=colors["bg"], fg=colors["muted"]).pack(
+            side="left", padx=(10, 4))
         self.model_var = tk.StringVar(value=self.models[0] if self.models else "")
         if self.models:
             mcombo = ttk.Combobox(ollama_bar, textvariable=self.model_var,
@@ -90,12 +93,12 @@ class AssistantPage(ttk.Frame):
             mcombo = ttk.Combobox(ollama_bar, textvariable=self.model_var,
                                   state="disabled", values=["Ollama недоступна"], width=16)
         mcombo.pack(side="left")
-        self.ollama_status = tk.Label(ollama_bar, text="", bg=BG, fg=MUTED)
+        self.ollama_status = tk.Label(ollama_bar, text="", bg=colors["bg"], fg=colors["muted"])
         self.ollama_status.pack(side="left", padx=8)
 
         input_frame = ttk.Frame(self, style="Page.TFrame")
         input_frame.pack(fill="x", padx=12, pady=(6, 12))
-        self.entry = ttk.Entry(input_frame, font=("Noto Sans", 11))
+        self.entry = ttk.Entry(input_frame, font=self.theme.font(11))
         self.entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.entry.bind("<Return>", lambda e: self.send_question())
         ttk.Button(input_frame, text="Спросить",
@@ -120,8 +123,8 @@ class AssistantPage(ttk.Frame):
         self.chat.config(state="normal")
         self.pending_start = self.chat.index("end-1c")
         self.chat.insert("end", text + "\n\n", "pending")
-        self.chat.tag_configure("pending", foreground=MUTED,
-                                font=("Noto Sans", 10, "italic"))
+        self.chat.tag_configure("pending", foreground=self.theme.colors["muted"],
+                                font=self.theme.font(10, slant="italic"))
         self.chat.see("end")
         self.chat.config(state="disabled")
 
@@ -149,8 +152,8 @@ class AssistantPage(ttk.Frame):
     def _answer_ollama_async(self, query: str):
         model = self.model_var.get()
         self.entry.config(state="disabled")
-        self.ollama_status.config(text="⏳ Думаю...")
-        self._append_pending("Ассистент: ⏳ Думаю (Ollama, может занять 10–60 сек)...")
+        self.ollama_status.config(text="Думаю...")
+        self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
         prompt = self._build_ollama_prompt(query)
 
         def work():
@@ -158,7 +161,7 @@ class AssistantPage(ttk.Frame):
                 resp = ask_ollama(model, prompt)
                 result = resp if resp else "Пустой ответ модели."
             except Exception as exc:
-                result = (f"⚠️ Не удалось обратиться к Ollama: {exc}\n\n"
+                result = (f"⚠ Не удалось обратиться к Ollama: {exc}\n\n"
                           "Отвечаю по базе знаний:\n" + self._answer(query))
             self.after(0, lambda: self._ollama_done(result))
 
