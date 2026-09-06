@@ -114,6 +114,43 @@ def test_rejects_unknown_anchor():
                       mind={"good": [], "limit": [], "menu": []}, meta=_meta())
 
 
+def test_rejects_duplicate_schedule_item_ids():
+    schedule = [
+        {"id": "s1", "title": "т", "detail": "т", "cat": "Питание", "days": [0],
+         "anchor": "allday", "time": None, "tips": []},
+        {"id": "s1", "title": "д", "detail": "д", "cat": "Питание", "days": [1],
+         "anchor": "allday", "time": None, "tips": []},
+    ]
+
+    with pytest.raises(ContentError, match="дубл"):
+        Content.build(tips=[], schedule=schedule, synonyms={},
+                      mind={"good": [], "limit": [], "menu": []}, meta=_meta())
+
+
+def test_rejects_time_on_item_with_non_clock_anchor():
+    """Время у якорного пункта разошлось бы с тем, что показывает display_time."""
+    schedule = [
+        {"id": "s1", "title": "т", "detail": "т", "cat": "Питание", "days": [0],
+         "anchor": "morning", "time": "07:00", "tips": []},
+    ]
+
+    with pytest.raises(ContentError, match="anchor=morning"):
+        Content.build(tips=[], schedule=schedule, synonyms={},
+                      mind={"good": [], "limit": [], "menu": []}, meta=_meta())
+
+
+def test_rejects_requires_without_alternative():
+    """Условие без альтернативы просто вычеркнуло бы пункт из чужого дня."""
+    schedule = [
+        {"id": "s1", "title": "т", "detail": "т", "cat": "Питание", "days": [0],
+         "anchor": "allday", "time": None, "tips": [], "requires": {"gym": True}},
+    ]
+
+    with pytest.raises(ContentError, match="альтернатив"):
+        Content.build(tips=[], schedule=schedule, synonyms={},
+                      mind={"good": [], "limit": [], "menu": []}, meta=_meta())
+
+
 # -- отсутствующие и неверного типа поля -------------------------------
 def _tip(**overrides):
     tip = {"id": "a1", "cat": "Питание", "title": "т", "text": "т", "sched": "т",
