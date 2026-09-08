@@ -55,6 +55,19 @@ _CYRILLIC = "абвгдежзийклмнопрстуфхцчшщъыьэюяё"
 _LATIN = "abvgdezhziyklmnoprstufhtschshsch'y'eyua-e"
 _SKIP_PARA = re.compile(r"^\s*(cover|обложк)\s*$", re.I)
 
+# Служебные разделы: блёрбы, выходные данные и примечания-словари не несут
+# рекомендаций и только засоряют поиск и контекст.
+_SERVICE_SECTIONS = {"Отзывы", "Аннотация", "Выходные данные", "Обложка",
+                     "Информация об авторе", "Примечания", "Список литературы"}
+# Сноски-глоссарии в конце книг начинаются с номера без точки: «18 АТФ – …».
+# Нумерованные же рекомендации оформлены как «1. …» и под правило не попадают.
+_GLOSSARY_RE = re.compile(r"^\d{1,3}\s+[A-ZА-ЯЁ]")
+_CREDIT_MARKERS = (
+    "shutterstock", "фото:", "фотобанк", "все права защищены",
+    "использованы иллюстрации", "оформлении использованы",
+    "дизайн обложки", "isbn", "переиздание", "©",
+)
+
 
 def _clean(raw: str) -> str:
     """Служебные пробелы/переносы -> обычные, всё схлопнуть в один пробел."""
@@ -207,6 +220,22 @@ def _read_paragraphs(text_dir: Path, spine: list[str],
     return result
 
 
+def _is_service_paragraph(para) -> bool:
+    """Мусорный абзац: блёрбы, выходные данные, сноски-словари, титулы.
+
+    Решает, выкинуть ли абзац до нарезки на отрывки. Нумерованные
+    рекомендации («1. Развивайте…») не задеваются: у сносок номер стоит
+    без точки, у списков — с точкой.
+    """
+    text = para.text.strip()
+    low = text.lower()
+    if para.section and para.section[0] in _SERVICE_SECTIONS:
+        return True
+    if _GLOSSARY_RE.match(text):
+        return True
+    return any(marker in low for marker in _CREDIT_MARKERS)
+
+
 def _read_toc_maps(ncx: Path):
     """Карты: файл -> раздел (для файловых пунктов), якорь -> раздел."""
     by_file, by_anchor = {}, {}
@@ -354,7 +383,13 @@ def _build_one(mobi: Path) -> dict:
                     if p.is_file()), None)
         by_file, by_anchor = _read_toc_maps(ncx) if ncx else ({}, {})
         paragraphs = _read_paragraphs(opf_path.parent, spine, by_file, by_anchor)
+        paragraphs = [p for p in paragraphs if not _is_service_paragraph(p)]
         chunks = _chunk(paragraphs)
+        # Сноски-определения нередко сливаются в свой отрывок, который
+        # начинается с номера без точки: «11 Вызывающие атеросклероз…».
+        chunks = [c for c in chunks if not _GLOSSARY_RE.match(c[1].strip())]
+        # Титульные и выходные страницы до первого раздела оглавления.
+        chunks = [c for c in chunks if c[0].strip()]
         meta = _meta(title, creator, mobi.name)
         passages = [
             {"id": f"{meta['id']}:{i:04d}",
