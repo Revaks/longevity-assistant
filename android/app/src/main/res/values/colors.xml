@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Палитра повторяет десктопную ui/theme.py: акцент #0f766e, фон #f4f5f7 -->
+    <color name="primary">#0F766E</color>
+    <color name="primary_dark">#115E59</color>
+    <color name="accent">#0F766E</color>
+    <color name="bg">#F4F5F7</color>
+    <color name="card">#FFFFFF</color>
+    <color name="text_primary">#111827</color>
+    <color name="text_muted">#6B7280</color>
+    <color name="sidebar">#1F2937</color>
+    <color name="sidebar_active">#374151</color>
+    <color name="note_accent">#92400E</color>
+    <color name="header_selected">#CFFAFE</color>
+    <color name="header_default">#E5E7EB</color>
+    <color name="chip_bg">#E2E8F0</color>
+    <color name="today_bg">#0F766E</color>
+
+    <color name="ic_launcher_background">#0F766E</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#FF000000</color>
+
+    <!-- Цвета категорий приходят из meta.json; здесь только карта по умолчанию -->
+    <color name="cat_lifestyle">#2E7D32</color>
+    <color name="cat_nutrition">#E65100</color>
+    <color name="cat_supplements">#6A1B9A</color>
+    <color name="cat_procedures">#1565C0</color>
+</resources>

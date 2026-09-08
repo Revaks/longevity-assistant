@@ -1,0 +1,45 @@
+# Сборка Android-версии на GitHub Actions: юнит-тесты ядра + debug APK.
+# Ветка: feature/android-kotlin (и любые другие с изменениями в android/).
+name: Android build
+
+on:
+  push:
+    paths:
+      - "android/**"
+  pull_request:
+    paths:
+      - "android/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle wrapper
+        run: |
+          chmod +x gradlew
+          echo "org.gradle.jvmargs=-Xmx2g" >> gradle.properties
+
+      - name: Unit tests (ядро: стеммер, BM25, загрузка, ассистент)
+        run: ./gradlew testDebugUnitTest
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: longevity-assistant-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
