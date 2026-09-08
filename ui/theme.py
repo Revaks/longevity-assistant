@@ -1,0 +1,80 @@
+"""Шрифты, палитра и иконки — единственное место, где интерфейс задаёт вид."""
+
+from tkinter import font as tkfont
+
+FONT_CANDIDATES = (
+    "Noto Sans", "DejaVu Sans", "Segoe UI", "Helvetica Neue", "SF Pro Text",
+    "Cantarell", "Liberation Sans", "Arial",
+)
+
+PALETTE = {
+    "bg": "#f4f5f7",
+    "sidebar": "#1f2937",
+    "sidebar_active": "#374151",
+    "accent": "#0f766e",
+    "text": "#111827",
+    "muted": "#6b7280",
+    "card": "#ffffff",
+}
+
+
+def pick_family(available: set[str]) -> str:
+    for candidate in FONT_CANDIDATES:
+        if candidate in available:
+            return candidate
+    return "TkDefaultFont"
+
+
+def _linearize(channel: float) -> float:
+    return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(hex_color: str) -> float:
+    """Относительная яркость по формуле WCAG 2.x, диапазон 0..1."""
+    h = hex_color.lstrip("#")
+    r, g, b = (_linearize(int(h[i:i + 2], 16) / 255) for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(color_a: str, color_b: str) -> float:
+    """Отношение контраста WCAG: (L_светлого + 0.05) / (L_тёмного + 0.05).
+
+    Не зависит от Tk и живого экрана — считается по формуле, а не проверяется
+    на глаз, поэтому смена палитры ловится тестом раньше, чем пользователем.
+    """
+    la, lb = relative_luminance(color_a), relative_luminance(color_b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+class Theme:
+    def __init__(self, root):
+        self._root = root
+        self.family = pick_family(set(tkfont.families(root)))
+        self.colors = dict(PALETTE)
+        self._cache: dict[tuple, tkfont.Font] = {}
+        self._icons: dict[tuple, "tk.PhotoImage"] = {}
+
+    def font(self, size: int = 10, weight: str = "normal", slant: str = "roman"):
+        key = (size, weight, slant)
+        if key not in self._cache:
+            self._cache[key] = tkfont.Font(
+                family=self.family, size=size, weight=weight, slant=slant)
+        return self._cache[key]
+
+    def icon(self, name: str, size: int = 16):
+        """PNG-иконка раздела, закэшированная по (имя, размер).
+
+        Кэш обязателен: Tk не удерживает PhotoImage сам — без ссылки на
+        Python-объект картинка исчезнет при сборке мусора, и на месте
+        иконки останется пустота.
+        """
+        key = (name, size)
+        if key not in self._icons:
+            from importlib import resources
+            import tkinter as tk
+
+            ref = resources.files("longevity.data").joinpath(f"icons/{name}-{size}.png")
+            with resources.as_file(ref) as path:
+                self._icons[key] = tk.PhotoImage(file=str(path), master=self._root)
+        return self._icons[key]
