@@ -54,6 +54,7 @@ SIZES = (16, 32)
 #: Цвет — параметр функций рисования, смена палитры — правка этого словаря.
 COLOR_BY_NAME = {
     "calendar": PALETTE["card"],
+    "activity": PALETTE["card"],
     "nutrition": PALETTE["card"],
     "knowledge": PALETTE["card"],
     "assistant": PALETTE["card"],
@@ -199,8 +200,22 @@ def draw_clock(s: int, color: str) -> Image.Image:
     return img
 
 
+def draw_activity(s: int, color: str) -> Image.Image:
+    """Окружность с галочкой: трекер выполнения пунктов расписания."""
+    img = _canvas(s)
+    d = ImageDraw.Draw(img)
+    stroke = max(1, round(s * 0.08))
+    cx, cy, r = s * 0.5, s * 0.5, s * 0.36
+
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=stroke)
+    d.line([(s * 0.30, s * 0.50), (s * 0.44, s * 0.64), (s * 0.72, s * 0.36)],
+           fill=color, width=stroke)
+    return img
+
+
 ICONS = {
     "calendar": draw_calendar,
+    "activity": draw_activity,
     "nutrition": draw_nutrition,
     "knowledge": draw_knowledge,
     "assistant": draw_assistant,

@@ -3,14 +3,12 @@
 
 import datetime as dt
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from longevity.schedule import display_time, get_today_plan
 
 from .app import WEEKDAYS_FULL, fmt_day
 
-#: Высота поля заметки в строках. Заметка на день многострочная по спеке.
-NOTE_HEIGHT = 3
 
 
 class CalendarPage(ttk.Frame):
@@ -57,22 +55,7 @@ class CalendarPage(ttk.Frame):
             tk.Label(legend, text="●", fg=color, bg=colors["bg"]).pack(side="left", padx=(8, 1))
             tk.Label(legend, text=cat, bg=colors["bg"], fg=colors["muted"]).pack(side="left")
 
-        # Редактор заметки — сразу под навигацией: на низких экранах поле
-        # в самом низу страницы не помещалось, и заметку нельзя было создать.
-        notes_bar = ttk.Frame(self, style="Page.TFrame")
-        notes_bar.pack(fill="x", padx=12, pady=(0, 6))
-        tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
-                 fg=colors["text"]).pack(side="left", anchor="n")
-        self.note_text = tk.Text(notes_bar, height=NOTE_HEIGHT, wrap="word",
-                                 relief="groove", bd=1, padx=6, pady=4,
-                                 font=self.theme.font(10),
-                                 bg=colors["card"], fg=colors["text"])
-        self.note_text.pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(notes_bar, text="Сохранить",
-                   command=self._save_note).pack(side="left", padx=2, anchor="n")
-        ttk.Button(notes_bar, text="Удалить",
-                   command=self._delete_note).pack(side="left", padx=2, anchor="n")
-
+        # Заметки редактируются во вкладке «Заметки»; здесь — только индикатор.
         # Сетка дней недели занимает оставшуюся высоту
         self.grid_frame = ttk.Frame(self, style="Page.TFrame")
         self.grid_frame.pack(fill="both", expand=True, padx=12)
@@ -130,7 +113,7 @@ class CalendarPage(ttk.Frame):
             text=f"{self.week_start.day:02d}.{self.week_start.month:02d} – "
                  f"{sunday.day:02d}.{sunday.month:02d}.{sunday.year}")
 
-        week_notes = self.storage.notes_in_range(
+        week_notes = self.storage.diary_entries_in_range(
             self.week_start.isoformat(),
             (self.week_start + dt.timedelta(days=6)).isoformat(),
         )
@@ -138,7 +121,7 @@ class CalendarPage(ttk.Frame):
         for i, (header, txt, _col) in enumerate(self.day_widgets):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
-            note = week_notes.get(key)
+            notes = [e for e in week_notes if e["date"] == key]
             is_today = day == today
 
             # Фон "сегодня" (colors["accent"]) темнее, чем фон обычного и
@@ -146,7 +129,7 @@ class CalendarPage(ttk.Frame):
             # контраст ниже 3:1 (WCAG AA для графики), поэтому там отдельный
             # светлый вариант. Проверено tests/test_icons.py::
             # test_note_icon_contrast_meets_wcag_aa.
-            if note:
+            if notes:
                 icon_name = "note-light" if is_today else "note"
                 header.config(text=fmt_day(day), image=self.theme.icon(icon_name, 16),
                               compound="right")
@@ -169,48 +152,16 @@ class CalendarPage(ttk.Frame):
                                   font=self.theme.font(9, "bold"))
                 txt.insert("end", f"{display_time(it)}  ", "time")
                 txt.insert("end", it.title + "\n", tag)
-            if note:
-                txt.insert("end", "\n" + note + "\n", "note")
+            if notes:
                 txt.tag_configure("note", foreground="#92400e",
                                   font=self.theme.font(9, slant="italic"))
+                txt.insert("end", "\n")
+                for entry in notes:
+                    txt.insert("end", entry["text"] + "\n", "note")
             txt.tag_configure("time", foreground=colors["muted"], font=self.theme.font(9))
             txt.config(state="disabled")
 
         self._show_day_detail()
-        self._load_note_to_entry()
-
-    # -- заметки -------------------------------------------------------
-    def note_value(self) -> str:
-        """Текст заметки без служебного перевода строки, который добавляет Tk."""
-        return self.note_text.get("1.0", "end-1c")
-
-    def _set_note_value(self, text: str) -> None:
-        self.note_text.delete("1.0", "end")
-        if text:
-            self.note_text.insert("1.0", text)
-
-    def _load_note_to_entry(self):
-        key = self.selected_day.isoformat()
-        self._set_note_value(self.storage.get_note(key))
-
-    def _save_note(self):
-        key = self.selected_day.isoformat()
-        try:
-            self.storage.set_note(key, self.note_value())
-        except Exception as exc:
-            messagebox.showerror("Не удалось сохранить заметку", str(exc))
-            return
-        self.refresh()
-
-    def _delete_note(self):
-        key = self.selected_day.isoformat()
-        try:
-            self.storage.set_note(key, "")
-        except Exception as exc:
-            messagebox.showerror("Не удалось удалить заметку", str(exc))
-            return
-        self._set_note_value("")
-        self.refresh()
 
     def _show_day_detail(self):
         colors = self.theme.colors

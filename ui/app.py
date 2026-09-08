@@ -135,11 +135,13 @@ class LongevityApp(tk.Tk):
                  fg="#9ca3af", font=self.theme.font(8), justify="center").pack(pady=(0, 14))
 
         self.nav_buttons = {}
-        for key, label in (("calendar", "Календарь"),
-                           ("nutrition", "Питание"),
-                           ("knowledge", "База знаний"),
-                           ("assistant", "Ассистент")):
-            btn = tk.Button(sidebar, text=label, image=self.theme.icon(key, 16),
+        for key, label, icon in (("calendar", "Календарь", "calendar"),
+                                 ("activity", "Активность", "activity"),
+                                 ("notes", "Заметки", "note"),
+                                 ("nutrition", "Питание", "nutrition"),
+                                 ("knowledge", "База знаний", "knowledge"),
+                                 ("assistant", "Ассистент", "assistant")):
+            btn = tk.Button(sidebar, text=label, image=self.theme.icon(icon, 16),
                             compound="left", anchor="w", relief="flat",
                             bg=colors["sidebar"], fg=colors["card"], font=self.theme.font(11),
                             activebackground=colors["sidebar_active"],
@@ -166,9 +168,11 @@ class LongevityApp(tk.Tk):
         # используют друг друга (страницам нужна палитра и fmt_day отсюда,
         # этому методу — классы страниц), а к моменту вызова _build_pages
         # модуль ui.app уже полностью загружен и предоставляет своё содержимое.
+        from .activity_page import ActivityPage
         from .assistant_page import AssistantPage
         from .calendar_page import CalendarPage
         from .knowledge_page import KnowledgePage
+        from .notes_page import NotesPage
         from .nutrition_page import NutritionPage
 
         container = ttk.Frame(self, style="Page.TFrame")
@@ -178,6 +182,8 @@ class LongevityApp(tk.Tk):
 
         self.pages = {}
         for key, cls in (("calendar", CalendarPage),
+                         ("activity", ActivityPage),
+                         ("notes", NotesPage),
                          ("nutrition", NutritionPage),
                          ("knowledge", KnowledgePage),
                          ("assistant", AssistantPage)):
@@ -200,6 +206,8 @@ class LongevityApp(tk.Tk):
 
     def show_page(self, key: str):
         titles = {"calendar": "Календарь рекомендаций",
+                  "activity": "Активность — отметки о выполнении",
+                  "notes": "Заметки (дневник)",
                   "nutrition": "Питание (диета MIND + меню недели)",
                   "knowledge": "База знаний (советы из книги)",
                   "assistant": "Умный ассистент"}
