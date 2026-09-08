@@ -6,35 +6,42 @@ from longevity.schedule import _time_key, display_time, get_today_plan
 # Порядок, снятый с app.py до переноса логики в longevity/schedule.py.
 # Любое расхождение означает, что календарь стал показывать пункты иначе.
 EXPECTED_PLAN = {
-    0: ["sleep_wake", "meal_breakfast", "train_aerobic", "train_strength",
-        "supp_omega_d", "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_greens", "mind_nuts", "mind_grains", "mind_legumes"],
-    1: ["sleep_wake", "meal_breakfast", "train_walk", "supp_omega_d",
-        "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_greens", "mind_berries", "mind_grains", "mind_poultry"],
-    2: ["sleep_wake", "meal_breakfast", "train_aerobic", "supp_omega_d",
-        "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_fish", "mind_greens", "mind_nuts", "mind_grains", "mind_legumes"],
-    3: ["sleep_wake", "meal_breakfast", "train_walk", "train_strength",
-        "supp_omega_d", "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_greens", "mind_grains"],
-    4: ["sleep_wake", "meal_breakfast", "train_aerobic", "supp_omega_d",
-        "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_fish", "mind_greens", "mind_nuts", "mind_grains",
-        "mind_legumes", "mind_poultry"],
-    5: ["sleep_wake", "meal_breakfast", "train_walk", "supp_omega_d",
-        "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "sauna", "mind_greens", "mind_berries", "mind_nuts", "mind_grains"],
-    6: ["weekly_review", "sleep_wake", "meal_breakfast", "supp_omega_d",
-        "meal_lunch", "green_tea", "mental_load", "meal_dinner",
-        "evening_walk", "dim_light", "sleep_start",
-        "mind_fish", "mind_nuts", "mind_grains"],
+    0: [
+        "sleep_wake", "meal_breakfast", "train_aerobic", "train_strength", "supp_omega_d", "meal_lunch",
+        "green_tea", "mental_load", "brain_training", "meal_dinner", "evening_walk", "dim_light",
+        "sleep_start", "mind_greens", "mind_nuts", "mind_grains", "mind_legumes", "gut_prebiotics",
+    ],
+    1: [
+        "sleep_wake", "meal_breakfast", "train_walk", "supp_omega_d", "meal_lunch", "green_tea",
+        "mental_load", "meal_dinner", "evening_walk", "dim_light", "sleep_start", "mind_greens",
+        "mind_berries", "mind_grains", "mind_poultry", "gut_prebiotics",
+    ],
+    2: [
+        "sleep_wake", "meal_breakfast", "train_aerobic", "supp_omega_d", "meal_lunch", "green_tea",
+        "mental_load", "brain_training", "meal_dinner", "evening_walk", "dim_light", "sleep_start",
+        "mind_fish", "mind_greens", "mind_nuts", "mind_grains", "mind_legumes", "gut_prebiotics",
+    ],
+    3: [
+        "sleep_wake", "meal_breakfast", "train_walk", "train_strength", "supp_omega_d", "meal_lunch",
+        "green_tea", "mental_load", "meal_dinner", "evening_walk", "dim_light", "sleep_start",
+        "mind_greens", "mind_grains", "gut_prebiotics",
+    ],
+    4: [
+        "sleep_wake", "meal_breakfast", "train_aerobic", "supp_omega_d", "meal_lunch", "green_tea",
+        "mental_load", "brain_training", "meal_dinner", "evening_walk", "dim_light", "sleep_start",
+        "mind_fish", "mind_greens", "mind_nuts", "mind_grains", "mind_legumes", "mind_poultry",
+        "gut_prebiotics",
+    ],
+    5: [
+        "sleep_wake", "meal_breakfast", "train_walk", "supp_omega_d", "meal_lunch", "green_tea",
+        "mental_load", "meal_dinner", "evening_walk", "dim_light", "sleep_start", "sauna",
+        "mind_greens", "mind_berries", "mind_nuts", "mind_grains", "gut_prebiotics",
+    ],
+    6: [
+        "weekly_review", "sleep_wake", "meal_breakfast", "supp_omega_d", "meal_lunch", "green_tea",
+        "mental_load", "brain_training", "meal_dinner", "evening_walk", "dim_light", "sleep_start",
+        "mind_fish", "mind_nuts", "mind_grains", "gut_prebiotics",
+    ],
 }
 
 # Понедельник, чтобы day.weekday() совпадал со смещением от этой даты.

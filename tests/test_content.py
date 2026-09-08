@@ -6,8 +6,8 @@ from longevity.content import Content, ContentError, MenuDay, ScheduleItem, Tip,
 def test_loads_everything():
     content = load_content()
 
-    assert len(content.tips) == 70
-    assert len(content.schedule) == 22
+    assert len(content.tips) == 82
+    assert len(content.schedule) == 24
     assert len(content.mind_good) == 10
     assert len(content.mind_limit) == 5
     assert len(content.menu) == 7
