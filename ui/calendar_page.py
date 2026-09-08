@@ -57,7 +57,23 @@ class CalendarPage(ttk.Frame):
             tk.Label(legend, text="●", fg=color, bg=colors["bg"]).pack(side="left", padx=(8, 1))
             tk.Label(legend, text=cat, bg=colors["bg"], fg=colors["muted"]).pack(side="left")
 
-        # Сетка дней недели
+        # Редактор заметки — сразу под навигацией: на низких экранах поле
+        # в самом низу страницы не помещалось, и заметку нельзя было создать.
+        notes_bar = ttk.Frame(self, style="Page.TFrame")
+        notes_bar.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
+                 fg=colors["text"]).pack(side="left", anchor="n")
+        self.note_text = tk.Text(notes_bar, height=NOTE_HEIGHT, wrap="word",
+                                 relief="groove", bd=1, padx=6, pady=4,
+                                 font=self.theme.font(10),
+                                 bg=colors["card"], fg=colors["text"])
+        self.note_text.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(notes_bar, text="Сохранить",
+                   command=self._save_note).pack(side="left", padx=2, anchor="n")
+        ttk.Button(notes_bar, text="Удалить",
+                   command=self._delete_note).pack(side="left", padx=2, anchor="n")
+
+        # Сетка дней недели занимает оставшуюся высоту
         self.grid_frame = ttk.Frame(self, style="Page.TFrame")
         self.grid_frame.pack(fill="both", expand=True, padx=12)
 
@@ -69,7 +85,7 @@ class CalendarPage(ttk.Frame):
             header = tk.Label(col, text="", font=self.theme.font(10, "bold"),
                               pady=6, relief="groove", bd=1)
             header.pack(fill="x")
-            txt = tk.Text(col, height=24, wrap="word", cursor="hand2",
+            txt = tk.Text(col, height=16, wrap="word", cursor="hand2",
                           relief="groove", bd=1, padx=6, pady=6,
                           font=self.theme.font(9), state="disabled",
                           bg=colors["card"], fg=colors["text"])
@@ -79,29 +95,11 @@ class CalendarPage(ttk.Frame):
             self.day_widgets.append((header, txt, col))
         self.grid_frame.rowconfigure(0, weight=1)
 
-        # Нижняя панель с деталями выбранного дня
-        self.detail = tk.Text(self, height=8, wrap="word", relief="groove", bd=1,
-                              padx=10, pady=8, font=self.theme.font(10),
+        # Детали выбранного дня — внизу, компактно
+        self.detail = tk.Text(self, height=4, wrap="word", relief="groove", bd=1,
+                              padx=10, pady=6, font=self.theme.font(10),
                               bg=colors["card"], fg=colors["text"], state="disabled")
-        self.detail.pack(fill="x", padx=12, pady=(6, 6))
-
-        # Панель заметок на выбранный день
-        notes_bar = ttk.Frame(self, style="Page.TFrame")
-        notes_bar.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
-                 fg=colors["text"]).pack(side="left", anchor="n")
-        # Поле многострочное: в заметку на день пишут список из нескольких
-        # пунктов, и однострочный Entry обрезал его в одну строку без
-        # возможности перенести. Три строки — то, что требует спека.
-        self.note_text = tk.Text(notes_bar, height=NOTE_HEIGHT, wrap="word",
-                                 relief="groove", bd=1, padx=6, pady=4,
-                                 font=self.theme.font(10),
-                                 bg=colors["card"], fg=colors["text"])
-        self.note_text.pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(notes_bar, text="Сохранить",
-                   command=self._save_note).pack(side="left", padx=2, anchor="n")
-        ttk.Button(notes_bar, text="Удалить",
-                   command=self._delete_note).pack(side="left", padx=2, anchor="n")
+        self.detail.pack(fill="x", padx=12, pady=(6, 10))
 
         self.refresh()
 
