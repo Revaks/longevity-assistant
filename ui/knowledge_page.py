@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Страница «База знаний»: советы (70) + полные тексты книг (вкладка «Книги»).
+"""Страница «База знаний»: советы + полные тексты книг (вкладка «Книги»).
 
 Советы — структурированные короткие рекомендации по четырём категориям.
 Книги — отрывки из «120 лет жизни», «Мозга долгожителя» и «Кишечника
-долгожителя»; ищутся тем же BM25-движком по разделу и тексту.
+долгожителя»; ищутся BM25-движком (или гибридом BM25 + вектора Ollama).
 """
 
+import re
 import tkinter as tk
 from tkinter import ttk
 
@@ -103,6 +104,11 @@ class KnowledgePage(ttk.Frame):
         self.books_var.trace_add("write", lambda *a: self.refresh_books())
         ent = ttk.Entry(top, textvariable=self.books_var, width=32)
         ent.pack(side="left", padx=6)
+        self.books_hybrid_var = tk.BooleanVar(value=False)
+        self.hybrid_check = ttk.Checkbutton(
+            top, text="Смысловой поиск (Ollama)",
+            variable=self.books_hybrid_var, command=self.refresh_books)
+        self.hybrid_check.pack(side="left", padx=(4, 0))
         ttk.Button(top, text="Сбросить",
                    command=self.reset_books).pack(side="left", padx=6)
         self.books_status = tk.Label(top, text="", bg=colors["bg"], fg=colors["muted"])
@@ -134,10 +140,18 @@ class KnowledgePage(ttk.Frame):
 
     def _update_books_status(self):
         retriever = getattr(self.app, "retriever", None)
+        hybrid_ready = retriever is not None and retriever.vector_ready
+        # «Смысловой поиск» доступен только при готовом векторном кэше.
+        try:
+            self.hybrid_check.config(state="normal" if hybrid_ready else "disabled")
+        except tk.TclError:
+            pass
+        if not hybrid_ready:
+            self.books_hybrid_var.set(False)
         if retriever is None:
             self.books_status.config(text="Поиск по отрывкам (BM25)")
-        elif retriever.vector_ready:
-            self.books_status.config(text=f"Поиск: BM25 + вектора ({retriever.model})")
+        elif hybrid_ready:
+            self.books_status.config(text=f"BM25 + вектора ({retriever.model})")
         elif retriever.busy:
             self.books_status.config(text=retriever.status)
         elif retriever.model:
@@ -221,10 +235,24 @@ class KnowledgePage(ttk.Frame):
             self.books_count.config(text=f"Отрывков: {len(content.passages)}")
             return
 
-        hits = self._book_search(query, limit=BOOKS_PAGE_LIMIT)
+        hits = self._search_books(query)
         for hit in hits:
             row(hit.passage)
-        self.books_count.config(text=f"Найдено: {len(hits)}")
+        mode = "гибрид" if self._hybrid_active() else "BM25"
+        self.books_count.config(text=f"Найдено: {len(hits)} ({mode})")
+
+    def _hybrid_active(self) -> bool:
+        """Гибридный поиск (BM25 + вектора) включён и возможен."""
+        retriever = getattr(self.app, "retriever", None)
+        return bool(self.books_hybrid_var.get()
+                    and retriever is not None and retriever.vector_ready)
+
+    def _search_books(self, query: str):
+        limit = BOOKS_PAGE_LIMIT
+        if self._hybrid_active():
+            retriever = getattr(self.app, "retriever", None)
+            return retriever.search(query, limit=limit, prefer_vector=True)
+        return self._book_search(query, limit=limit)
 
     def on_book_select(self, _event=None):
         sel = self.books_tree.selection()
@@ -244,4 +272,18 @@ class KnowledgePage(ttk.Frame):
         if passage.section:
             self.book_detail.insert("end", passage.section + "\n", "lab")
         self.book_detail.insert("end", "\n" + passage.text + "\n")
+        self._highlight_terms(self.book_detail, self.books_var.get())
         self.book_detail.config(state="disabled")
+
+    def _highlight_terms(self, widget, query: str) -> None:
+        """Подсветить вхождения слов запроса в тексте отрывка."""
+        widget.tag_configure("hl", background="#fde68a")
+        for token in re.findall(r"[А-Яа-яЁёA-Za-z0-9]{3,}", query):
+            start = "1.0"
+            while True:
+                pos = widget.search(token, start, stopindex="end", nocase=True)
+                if not pos:
+                    break
+                end = widget.index(f"{pos}+{len(token)}c")
+                widget.tag_add("hl", pos, end)
+                start = end

@@ -6,7 +6,7 @@ import pytest
 
 from longevity.content import Book, Content, Passage
 from longevity.storage import Storage
-from longevity.vectors import BookVectors, corpus_hash, cosine, model_key, top_k
+from longevity.vectors import BookVectors, corpus_hash, cosine, model_key, rrf_fuse, top_k
 
 
 def _passage(pid, text):
@@ -71,3 +71,21 @@ def test_vectors_cache_and_search(tmp_path):
 
 def test_model_key_namespaced():
     assert model_key("nomic-embed-text") == "emb:nomic-embed-text"
+
+
+def test_rrf_fuse_promotes_documents_present_in_both_lists():
+    fused = rrf_fuse([["p1", "p2"], ["p1", "p3"]])
+
+    assert fused[0] == "p1", "общий лидер списков должен выйти первым"
+    assert set(fused) == {"p1", "p2", "p3"}
+
+
+def test_rrf_fuse_is_deterministic():
+    a = ["x", "y", "z"]
+    b = ["z", "x"]
+    assert rrf_fuse([a, b]) == rrf_fuse([a, b])
+
+
+def test_rrf_fuse_handles_empty_lists():
+    assert rrf_fuse([[], []]) == []
+    assert rrf_fuse([["a"], []]) == ["a"]

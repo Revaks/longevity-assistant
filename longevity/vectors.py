@@ -52,6 +52,23 @@ def top_k(vectors: dict[str, list[float]], query: list[float], k: int,
     return scored[:k] if k else []
 
 
+def rrf_fuse(ranked_lists: list[list[str]], k: int = 60) -> list[str]:
+    """Reciprocal Rank Fusion: слияние нескольких ранжированных списков id.
+
+    Используется для гибридного поиска (BM25 + вектора): документ, высоко
+    стоящий в обоих списках, обгоняет лидера одного из них. Итоговый порядок
+    детерминирован: равные очки разводятся по исходному порядку списка.
+    """
+    scores: dict[str, float] = {}
+    for ranked in ranked_lists:
+        for rank, doc_id in enumerate(ranked):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+    # Стабильная сортировка по убыванию очков; первое появление — выше.
+    order = {doc_id: i for i, ranked in enumerate(ranked_lists)
+             for doc_id in ranked}
+    return sorted(scores, key=lambda doc_id: (-scores[doc_id], order[doc_id]))
+
+
 class BookVectors:
     """Кэш эмбеддингов отрывков поверх Storage (таблица embeddings).
 

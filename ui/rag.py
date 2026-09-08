@@ -14,7 +14,7 @@ import threading
 import tkinter as tk
 
 from longevity.search import BookHit
-from longevity.vectors import BookVectors
+from longevity.vectors import BookVectors, rrf_fuse
 
 from .ollama import embed_texts
 
@@ -142,12 +142,24 @@ class BookRetriever:
     # -- общий поиск -----------------------------------------------------
     def search(self, query: str, limit: int | None = None,
                prefer_vector: bool = True) -> list[BookHit]:
-        """Векторный поиск, если готов; иначе BM25."""
-        if prefer_vector and self.vector_ready:
-            try:
-                hits = self.search_vector(query, limit or BOOKS_PAGE_LIMIT)
-                if hits:
-                    return hits
-            except Exception:
-                pass  # сеть/модель сбойнули — BM25 ниже
-        return self.search_bm25(query, limit)
+        """Гибридный поиск: RRF-слияние BM25 и векторов, когда кэш готов.
+
+        BM25 ловит точные термины, вектора — смысловые аналоги, вместе они
+        стабильнее каждого по отдельности. Без векторов (или при сбое сети)
+        работает чистый BM25 — поиск никогда не ждёт Ollama.
+        """
+        if not (prefer_vector and self.vector_ready):
+            return self.search_bm25(query, limit)
+        try:
+            pool = max(limit or BOOKS_PAGE_LIMIT, 30)
+            bm25 = self.search_bm25(query, pool)
+            vectors = self.search_vector(query, pool)
+        except Exception:
+            return self.search_bm25(query, limit)  # сеть/модель сбойнули
+        if not vectors:
+            return bm25 if limit is None else bm25[:limit]
+        fused_ids = rrf_fuse([[h.passage.id for h in bm25],
+                             [h.passage.id for h in vectors]])
+        by_id = {h.passage.id: h for h in bm25 + vectors}
+        fused = [by_id[pid] for pid in fused_ids if pid in by_id]
+        return fused if limit is None else fused[:limit]
