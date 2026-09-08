@@ -25,6 +25,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Внутренняя раздача: подписываем релиз отладочным ключом, чтобы APK
+            // можно было сразу установить. Перед публикацией в Google Play
+            // замените на собственный keystore (см. README).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
