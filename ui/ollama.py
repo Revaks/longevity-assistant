@@ -73,3 +73,73 @@ def ask_ollama(model: str, prompt: str, timeout: int = 180) -> str:
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data.get("response", "").strip()
+
+
+#: Предпочтение при выборе модели эмбеддингов среди установленных. Русский
+#: текст лучше понимают мультиязычные модели, поэтому они в начале списка.
+EMBED_PREFERENCE = (
+    "bge-m3",
+    "multilingual-e5-large",
+    "paraphrase-multilingual-MiniLM-L12-v2",
+    "mxbai-embed-large",
+    "nomic-embed-text",
+    "qwen3-embedding:0.6b",
+)
+
+
+def choose_embed_model(models) -> str:
+    """Модель эмбеддингов по предпочтению, иначе первая подходящая."""
+    embed_models = embedding(models)
+    if not embed_models:
+        return ""
+    for name in EMBED_PREFERENCE:
+        if name in embed_models:
+            return name
+    return embed_models[0]
+
+
+def embed_texts(model: str, texts: list[str], timeout: int = 600,
+                batch: int = 16) -> list[list[float]]:
+    """Вектора текстов моделью Ollama.
+
+    Сначала /api/embed (пакетный ввод) — так быстрее; если сервер старой
+    версии и не знает этот эндпоинт, эмбеддинги считаются по одному через
+    /api/embeddings. Ошибки сети и формата не гасятся: решает вызывающий
+    код (векторный поиск опционален и откатывается на BM25).
+    """
+    if not texts:
+        return []
+    result: list[list[float]] = []
+    for start in range(0, len(texts), batch):
+        chunk = texts[start:start + batch]
+        result.extend(_embed_batch(model, chunk, timeout))
+    return result
+
+
+def _embed_batch(model: str, texts: list[str], timeout: int) -> list[list[float]]:
+    payload = json.dumps({"model": model, "input": texts}).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/embed", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        embeddings = data.get("embeddings")
+        if isinstance(embeddings, list) and embeddings:
+            return embeddings
+    except Exception:
+        pass  # старый сервер или иной формат — пробуем по одному ниже
+    return [_embed_one(model, text, timeout) for text in texts]
+
+
+def _embed_one(model: str, text: str, timeout: int) -> list[float]:
+    payload = json.dumps({"model": model, "prompt": text}).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/embeddings", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    vector = data.get("embedding")
+    if not isinstance(vector, list):
+        raise ValueError(f"Ollama вернула не вектор: {type(vector).__name__}")
+    return vector

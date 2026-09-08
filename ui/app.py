@@ -9,6 +9,7 @@ from longevity.content import Content
 from longevity.search import SearchIndex
 from longevity.storage import Storage
 
+from .rag import BookRetriever
 from .theme import Theme
 from .widgets import ModelStore
 
@@ -46,6 +47,8 @@ class LongevityApp(tk.Tk):
         # смена модели на одной панели видна на другой через subscribe().
         self.model_store = ModelStore(self, self.storage)
         self.model_store.refresh()
+        # Поиск по книгам: BM25 всегда + векторный кэш через Ollama.
+        self.retriever = BookRetriever(self, content, storage, self.model_store)
 
         self.title(self.content.app_title)
         self.minsize(*MIN_SIZE)

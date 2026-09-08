@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 notes.json*
 *.egg-info/
+# Исходные книги не попадают в git: в репозитории живёт только
+# сгенерированный longevity/data/books.json (см. tools/build_book_index.py).
+*.mobi
+.venv/

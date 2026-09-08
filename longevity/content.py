@@ -48,6 +48,24 @@ class MindGroup:
 
 
 @dataclass(frozen=True)
+class Book:
+    id: str
+    title: str
+    subtitle: str
+    author: str
+
+
+@dataclass(frozen=True)
+class Passage:
+    """Отрывок книги — единица поиска по книгам и контекста RAG."""
+    id: str
+    book: str
+    section: str
+    text: str
+
+
+
+@dataclass(frozen=True)
 class MenuDay:
     day: str
     breakfast: str
@@ -70,6 +88,8 @@ class Content:
     categories: tuple[str, ...]
     cat_colors: dict[str, str]
     quick_questions: tuple[str, ...]
+    books: tuple[Book, ...] = ()
+    passages: tuple[Passage, ...] = ()
 
     def tip(self, tip_id: str) -> Tip:
         for tip in self.tips:
@@ -77,8 +97,20 @@ class Content:
                 return tip
         raise KeyError(tip_id)
 
+    def book(self, book_id: str) -> Book:
+        for book in self.books:
+            if book.id == book_id:
+                return book
+        raise KeyError(book_id)
+
+    def passage(self, passage_id: str) -> Passage:
+        for passage in self.passages:
+            if passage.id == passage_id:
+                return passage
+        raise KeyError(passage_id)
+
     @classmethod
-    def build(cls, tips, schedule, synonyms, mind, meta) -> "Content":
+    def build(cls, tips, schedule, synonyms, mind, meta, books=None) -> "Content":
         categories = tuple(_field(meta, "categories", "list", "meta.json"))
         tip_objects = tuple(_build_tip(t, i) for i, t in enumerate(_records(tips, "tips.json"), 1))
         _check_tips(tip_objects, categories)
@@ -91,6 +123,11 @@ class Content:
         if not isinstance(synonyms, dict):
             raise ContentError(
                 f"synonyms.json: ожидался объект, получено {type(synonyms).__name__}")
+
+        if books is None:
+            book_objects, passage_objects = (), ()
+        else:
+            book_objects, passage_objects = _build_books(books)
 
         return cls(
             tips=tip_objects,
@@ -114,6 +151,8 @@ class Content:
             categories=categories,
             cat_colors=dict(_field(meta, "cat_colors", "dict", "meta.json")),
             quick_questions=tuple(_field(meta, "quick_questions", "list", "meta.json")),
+            books=book_objects,
+            passages=passage_objects,
         )
 
 
@@ -222,6 +261,57 @@ def _build_menu_day(row, index: int) -> MenuDay:
     )
 
 
+def _build_books(raw) -> tuple[tuple[Book, ...], tuple[Passage, ...]]:
+    """Разбор books.json: книги и отрывки с проверкой ссылок.
+
+    Поломанный или противоречивый файл останавливает запуск так же, как
+    повреждённые советы: тихо «не те» отрывки хуже явной ошибки.
+    """
+    if not isinstance(raw, dict):
+        raise ContentError(f"books.json: ожидался объект, получено {type(raw).__name__}")
+    book_rows = _records(_field(raw, "books", "list", "books.json"), "books.json")
+    passage_rows = _records(_field(raw, "passages", "list", "books.json"), "books.json")
+
+    books: list[Book] = []
+    seen_ids: set[str] = set()
+    for i, row in enumerate(book_rows, 1):
+        where = _where(row, i, "книга")
+        book = Book(
+            id=_field(row, "id", "str", where),
+            title=_field(row, "title", "str", where),
+            subtitle=_field(row, "subtitle", "str", where),
+            author=_field(row, "author", "str", where),
+        )
+        if book.id in seen_ids:
+            raise ContentError(f"books.json: дублирующийся id книги: {book.id}")
+        if not book.title.strip():
+            raise ContentError(f"{where}: пустое название")
+        seen_ids.add(book.id)
+        books.append(book)
+
+    book_ids = set(seen_ids)
+    passages: list[Passage] = []
+    seen: set[str] = set()
+    for i, row in enumerate(passage_rows, 1):
+        where = _where(row, i, "отрывок")
+        passage = Passage(
+            id=_field(row, "id", "str", where),
+            book=_field(row, "book", "str", where),
+            section=_field(row, "section", "str", where),
+            text=_field(row, "text", "str", where),
+        )
+        if passage.id in seen:
+            raise ContentError(f"books.json: дублирующийся id отрывка: {passage.id}")
+        if passage.book not in book_ids:
+            raise ContentError(
+                f"{where}: ссылка на несуществующую книгу {passage.book!r}")
+        if not passage.text.strip():
+            raise ContentError(f"{where}: пустой текст отрывка")
+        seen.add(passage.id)
+        passages.append(passage)
+    return tuple(books), tuple(passages)
+
+
 def _check_tips(tips: tuple[Tip, ...], categories: tuple[str, ...]) -> None:
     seen: set[str] = set()
     for tip in tips:
@@ -271,4 +361,5 @@ def load_content() -> Content:
         synonyms=_read("synonyms.json"),
         mind=_read("mind.json"),
         meta=_read("meta.json"),
+        books=_read("books.json"),
     )
