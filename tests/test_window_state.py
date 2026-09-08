@@ -264,11 +264,40 @@ def test_hidden_window_does_not_corrupt_saved_size(tk):
 
 
 def test_window_size_saved_with_negative_coordinate(tk):
-    """Размер окна сохраняется корректно при отрицательной X-координате."""
+    """Размер окна сохраняется корректно при отрицательной X-координате.
+
+    Раньше тест зависел от того, что оконный менеджер мгновенно применяет
+    geometry() к реальному окну: на Wayland/XWayland запрошенный размер не
+    применяется, и тест падал независимо от кода приложения. Здесь размер,
+    который «видит» приложение, задаётся напрямую, а вызов geometry с
+    отрицательным смещением только записывается — сценарий проверяется без
+    участия WM.
+    """
     from longevity.content import load_content
     from longevity.search import SearchIndex
     from longevity.storage import Storage
     from ui.app import LongevityApp, MIN_SIZE
+
+    geometry_calls = []
+
+    class SpyApp(LongevityApp):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._size = None
+
+        def geometry(self, *args, **kwargs):
+            if args:
+                geometry_calls.append(args[0])
+            return super().geometry(*args, **kwargs)
+
+        def force_size(self, width, height):
+            self._size = (width, height)
+
+        def winfo_width(self):
+            return self._size[0] if self._size is not None else super().winfo_width()
+
+        def winfo_height(self):
+            return self._size[1] if self._size is not None else super().winfo_height()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Path(tmpdir) / "test.db"
@@ -277,13 +306,15 @@ def test_window_size_saved_with_negative_coordinate(tk):
         try:
             content = load_content()
             index = SearchIndex(content)
-            app = LongevityApp(content, index, storage)
+            app = SpyApp(content, index, storage)
             app.update()
 
             # Устанавливаем размер > MIN_SIZE с отрицательной координатой
             target_w, target_h = MIN_SIZE[0] + 100, MIN_SIZE[1] + 50
             app.geometry(f"{target_w}x{target_h}-50+30")
-            app.update()
+            app.force_size(target_w, target_h)
+            assert any("-50" in call for call in geometry_calls), \
+                f"geometry с отрицательной координатой не вызывался: {geometry_calls}"
 
             # Закрываем приложение
             app.on_close()
