@@ -97,3 +97,31 @@ def test_reset_returns_the_whole_base(page):
     assert page.search_var.get() == ""
     assert page.cat_var.get() == "Все категории"
     assert len(_shown(page)) == len(page.app.content.tips)
+
+
+def test_books_tab_lists_everything_without_a_query(page):
+    """Вкладка «Книги» не должна выглядеть пустой: без запроса — все отрывки."""
+    rows = list(page.books_tree.get_children())
+
+    assert len(rows) == len(page.app.content.passages), \
+        f"ожидались все отрывки книг, показано {len(rows)}"
+
+
+def test_books_tab_search_narrows_results(page):
+    from ui.rag import BOOKS_PAGE_LIMIT
+
+    page.books_var.set("мелатонин")
+
+    rows = list(page.books_tree.get_children())
+    assert 0 < len(rows) <= BOOKS_PAGE_LIMIT
+    assert page.books_count.cget("text").startswith("Найдено:")
+
+
+def test_books_tab_selection_shows_passage_text(page):
+    page.books_var.set("мелатонин")
+    sel = page.books_tree.selection()
+    page.books_tree.selection_set(page.books_tree.get_children()[0])
+    page.on_book_select()
+
+    text = page.book_detail.get("1.0", "end")
+    assert len(text.strip()) > 100, "в панели деталей должен быть текст отрывка"

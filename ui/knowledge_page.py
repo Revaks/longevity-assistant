@@ -26,6 +26,7 @@ class KnowledgePage(ttk.Frame):
                              if retriever is not None else BookSearch(app.content).search)
         self._build()
         self.refresh_list()
+        self.refresh_books()
         retriever = getattr(app, "retriever", None)
         if retriever is not None and hasattr(retriever, "subscribe"):
             retriever.subscribe(self._on_retriever_change)
@@ -203,20 +204,26 @@ class KnowledgePage(ttk.Frame):
     def refresh_books(self):
         query = self.books_var.get().strip()
         self.books_tree.delete(*self.books_tree.get_children())
-        if not query:
-            self.books_count.config(text="Введите запрос для поиска по книгам")
-            return
-
-        hits = self._book_search(query, limit=BOOKS_PAGE_LIMIT)
         content = self.app.content
-        for hit in hits:
-            passage = hit.passage
+
+        def row(passage):
             try:
                 book_title = content.book(passage.book).title
             except KeyError:
                 book_title = passage.book
             self.books_tree.insert("", "end", iid=passage.id,
                                    values=(book_title, passage.section or "—"))
+
+        if not query:
+            # Как и вкладка «Советы»: без запроса показываем всё, поиск сужает.
+            for passage in content.passages:
+                row(passage)
+            self.books_count.config(text=f"Отрывков: {len(content.passages)}")
+            return
+
+        hits = self._book_search(query, limit=BOOKS_PAGE_LIMIT)
+        for hit in hits:
+            row(hit.passage)
         self.books_count.config(text=f"Найдено: {len(hits)}")
 
     def on_book_select(self, _event=None):
