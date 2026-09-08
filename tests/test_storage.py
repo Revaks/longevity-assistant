@@ -372,3 +372,52 @@ def test_same_schema_version_opens_normally(tmp_path):
 
     assert second.get_note("2026-09-06") == "сохранилось"
     second.close()
+
+
+# -- дневник: несколько заметок на день -------------------------------------
+
+def test_diary_adds_multiple_entries_per_date(tmp_path):
+    storage = Storage(tmp_path / "data.db")
+    try:
+        date = "2026-09-08"
+        storage.add_diary(date, "утром: бег")
+        storage.add_diary(date, "вечером: растяжка")
+
+        texts = [e["text"] for e in storage.diary_entries_on(date)]
+        assert texts == ["утром: бег", "вечером: растяжка"]
+        assert storage.has_diary_notes(date)
+        assert not storage.has_diary_notes("2026-09-09")
+    finally:
+        storage.close()
+
+
+def test_diary_update_and_delete(tmp_path):
+    storage = Storage(tmp_path / "data.db")
+    try:
+        date = "2026-09-08"
+        eid = storage.add_diary(date, "черновик")
+
+        assert storage.update_diary(eid, "исправлено")
+        assert storage.diary_entries_on(date)[0]["text"] == "исправлено"
+
+        assert storage.delete_diary(eid)
+        assert storage.diary_entries_on(date) == []
+        assert not storage.delete_diary(eid)
+    finally:
+        storage.close()
+
+
+def test_sync_notes_to_diary_migrates_single_notes(tmp_path):
+    storage = Storage(tmp_path / "data.db")
+    try:
+        storage.set_note("2026-09-07", "старая заметка")
+        moved = storage.sync_notes_to_diary()
+
+        assert moved == 1
+        assert storage.diary_entries_on("2026-09-07")[0]["text"] == "старая заметка"
+        assert storage.get_note("2026-09-07") == "", "legacy-строка перенесена"
+        # идемпотентность
+        assert storage.sync_notes_to_diary() == 0
+        assert len(storage.diary_entries_on("2026-09-07")) == 1
+    finally:
+        storage.close()

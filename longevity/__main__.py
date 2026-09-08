@@ -47,6 +47,8 @@ def main() -> int:
     try:
         storage = Storage(paths.db_path())
         storage.migrate_notes_json([Path(__file__).resolve().parent.parent / "notes.json"])
+        # Старые одиночные заметки (таблица notes) -> в дневник.
+        storage.sync_notes_to_diary()
     except StorageError as exc:
         _show_start_error("Не удалось открыть базу данных.", str(exc))
         return 1

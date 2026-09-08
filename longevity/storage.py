@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector       TEXT NOT NULL,
     PRIMARY KEY (tip_id, model)
 );
+-- Дневник: несколько заметок на день. Таблица notes выше остаётся
+-- только как legacy-источник для переноса (см. sync_notes_to_diary).
+CREATE TABLE IF NOT EXISTS diary (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    date    TEXT NOT NULL,
+    created TEXT NOT NULL,
+    text    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diary_date ON diary(date);
 """
 
 
@@ -127,6 +136,82 @@ class Storage:
             "SELECT date, text FROM notes WHERE date BETWEEN ? AND ?", (start, end)
         ).fetchall()
         return {row["date"]: row["text"] for row in rows}
+
+    # -- дневник (несколько заметок на день) ----------------------------
+    def diary_entries_on(self, date: str) -> list[dict]:
+        """Все заметки дня: [(id, date, created, text)] по времени создания."""
+        rows = self._conn.execute(
+            "SELECT id, date, created, text FROM diary WHERE date = ? "
+            "ORDER BY created, id", (date,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def diary_entries_in_range(self, start: str, end: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, date, created, text FROM diary "
+            "WHERE date BETWEEN ? AND ? ORDER BY date, created, id",
+            (start, end)).fetchall()
+        return [dict(row) for row in rows]
+
+    def has_diary_notes(self, date: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM diary WHERE date = ? LIMIT 1", (date,)).fetchone()
+        return row is not None
+
+    def add_diary(self, date: str, text: str) -> int:
+        """Новая заметка на день. Возвращает её id."""
+        text = text.strip()
+        if not text:
+            return 0
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO diary (date, created, text) VALUES (?, ?, ?)",
+                (date, created, text))
+        return cursor.lastrowid or 0
+
+    def update_diary(self, entry_id: int, text: str) -> bool:
+        text = text.strip()
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE diary SET text = ? WHERE id = ?", (text, entry_id))
+            return bool(cursor.rowcount)
+
+    def delete_diary(self, entry_id: int) -> bool:
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM diary WHERE id = ?", (entry_id,))
+            return bool(cursor.rowcount)
+
+    def sync_notes_to_diary(self) -> int:
+        """Перенести старые одиночные заметки (notes) в дневник.
+
+        Одна запись notes -> одна запись diary (дата/время переноса).
+        Старая строка удаляется — её копия уже в дневнике; повторный запуск
+        идемпотентен, дубликаты не создаются.
+        """
+        rows = self._conn.execute(
+            "SELECT date, text FROM notes ORDER BY date").fetchall()
+        moved = 0
+        with self._conn:
+            for row in rows:
+                date, text = row["date"], (row["text"] or "").strip()
+                if not text:
+                    continue
+                dup = self._conn.execute(
+                    "SELECT 1 FROM diary WHERE date = ? AND text = ? LIMIT 1",
+                    (date, text)).fetchone()
+                if dup:
+                    self._conn.execute(
+                        "DELETE FROM notes WHERE date = ?", (date,))
+                    continue
+                created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                self._conn.execute(
+                    "INSERT INTO diary (date, created, text) VALUES (?, ?, ?)",
+                    (date, created, text))
+                self._conn.execute(
+                    "DELETE FROM notes WHERE date = ?", (date,))
+                moved += 1
+        return moved
 
     # -- отметки выполнения --------------------------------------------
     def toggle_completion(self, date: str, item_id: str) -> bool:
