@@ -168,19 +168,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTab(key: String) {
         currentKey = key
+        val container = main ?: return
         val fm = supportFragmentManager
         val ft = fm.beginTransaction()
         for (tagKey in tags) {
             val existing = fm.findFragmentByTag(tagKey)
             if (tagKey == key) {
-                if (existing == null) ft.add(
-                    main!!.fragmentContainer.id, newFragment(tagKey), tagKey
-                ) else ft.show(existing)
-            } else if (existing != null && !existing.isHidden) {
+                if (existing == null) {
+                    ft.add(container.fragmentContainer.id, newFragment(tagKey), tagKey)
+                } else {
+                    ft.show(existing)
+                }
+            } else if (existing != null) {
                 ft.hide(existing)
             }
         }
         ft.commitAllowingStateLoss()
+        fm.executePendingTransactions()
+        // Гарантия единственного видимого фрагмента: FragmentTransaction.hide
+        // прячет вью не всегда вовремя, если оно создалось позже — поэтому
+        // принудительно оставляем видимым только активный раздел.
+        for (fragment in fm.fragments) {
+            if (!fragment.isAdded) continue
+            val view = fragment.view ?: continue
+            view.visibility =
+                if (fragment.tag == key) android.view.View.VISIBLE else android.view.View.GONE
+        }
     }
 
     private fun newFragment(key: String): Fragment = when (key) {
