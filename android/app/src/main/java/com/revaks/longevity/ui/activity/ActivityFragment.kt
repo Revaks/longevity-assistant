@@ -8,9 +8,11 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.revaks.longevity.LongevityApp
+import com.revaks.longevity.core.Content
 import com.revaks.longevity.core.Dates
 import com.revaks.longevity.core.Schedule
 import com.revaks.longevity.core.ScheduleItem
+import com.revaks.longevity.data.Storage
 import com.revaks.longevity.databinding.FragmentActivityBinding
 import com.revaks.longevity.databinding.ItemActivityTaskBinding
 import com.revaks.longevity.ui.Ui
@@ -19,6 +21,9 @@ import java.time.LocalDate
 /**
  * Вкладка «Активность»: отмечаем выполнение пунктов расписания на день.
  * Состояние живёт в Storage.completions (date + item_id).
+ *
+ * Отметка переключается сразу по результату из хранилища и без полного
+ * пересоздания списка — чекбокс не «откатывается» при нажатии.
  */
 class ActivityFragment : Fragment() {
 
@@ -46,7 +51,7 @@ class ActivityFragment : Fragment() {
         adapter = TaskAdapter(
             content = ready.content,
             storage = app.storage(),
-            onToggle = { _ -> refresh() },
+            onStatsChanged = { updateStats() },
         )
         binding.rvTasks.layoutManager = LinearLayoutManager(requireContext())
         binding.rvTasks.adapter = adapter
@@ -68,11 +73,21 @@ class ActivityFragment : Fragment() {
         val storage = app.storage()
 
         binding.tvDateLabel.text = Dates.fmtDayFull(selectedDay)
+        val date = Dates.iso(selectedDay)
         val items = Schedule.getDayPlan(ready.content, selectedDay)
-        adapter?.submit(items, storage.completionsOn(Dates.iso(selectedDay)))
+        adapter?.submit(date, items, storage.completionsOn(date))
+        updateStats()
+    }
 
-        // Прогресс дня
-        val doneCount = storage.completionsOn(Dates.iso(selectedDay)).size
+    /** Прогресс дня и сводка по неделе — без пересоздания списка. */
+    private fun updateStats() {
+        if (_binding == null) return
+        val ready = app.state as? LongevityApp.State.Ready ?: return
+        val storage = app.storage()
+        val date = Dates.iso(selectedDay)
+
+        val items = Schedule.getDayPlan(ready.content, selectedDay)
+        val doneCount = storage.completionsOn(date).size
         val total = items.size
         if (total == 0) {
             binding.tvProgress.text = "На этот день расписания нет"
@@ -82,7 +97,6 @@ class ActivityFragment : Fragment() {
             binding.progressBar.progress = doneCount * 100 / total
         }
 
-        // Сводка по текущей неделе
         val monday = Dates.mondayOf(selectedDay)
         val parts = ArrayList<String>(7)
         for (i in 0 until 7) {
@@ -101,18 +115,19 @@ class ActivityFragment : Fragment() {
     }
 }
 
-/** Пункты дня с чекбоксами; состояние берётся из [done] на каждый submit. */
+/** Пункты дня с чекбоксами. Клик по всей строке тоже переключает отметку. */
 private class TaskAdapter(
-    private val content: com.revaks.longevity.core.Content,
-    private val storage: com.revaks.longevity.data.Storage,
-    private val onToggle: (ScheduleItem) -> Unit,
+    private val content: Content,
+    private val storage: Storage,
+    private val onStatsChanged: () -> Unit,
 ) : RecyclerView.Adapter<TaskAdapter.Holder>() {
 
+    private var date: String = ""
     private val items = ArrayList<ScheduleItem>()
     private val done = HashSet<String>()
-    private var date: String = ""
 
-    fun submit(newItems: List<ScheduleItem>, doneIds: Set<String>) {
+    fun submit(newDate: String, newItems: List<ScheduleItem>, doneIds: Set<String>) {
+        date = newDate
         items.clear()
         items.addAll(newItems)
         done.clear()
@@ -141,11 +156,17 @@ private class TaskAdapter(
             if (item.detail.isNotEmpty()) View.VISIBLE else View.GONE
         b.tvTime.setTextColor(content.catColor(item.cat))
 
-        // setChecked без слушателя: нажатие пользователя обрабатывает ниже.
+        // Сначала состояние, потом слушатель — нажатие обрабатывается ровно раз.
         b.cbTask.setOnCheckedChangeListener(null)
         b.cbTask.isChecked = item.id in done
-        b.cbTask.setOnCheckedChangeListener { _, _ ->
-            onToggle(item)
+        b.cbTask.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked != (item.id in done)) {
+                val newState = storage.toggleCompletion(date, item.id)
+                if (newState) done.add(item.id) else done.remove(item.id)
+                onStatsChanged()
+            }
         }
+        // Клик по строке карточки = клик по чекбоксу.
+        b.root.setOnClickListener { b.cbTask.toggle() }
     }
 }
