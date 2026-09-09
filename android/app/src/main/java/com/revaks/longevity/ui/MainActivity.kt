@@ -34,9 +34,9 @@ class MainActivity : AppCompatActivity() {
 
     private val listener = { onStateChanged() }
 
-    /** Все шесть разделов приложения (порядок как в десктопе). */
+    /** Все разделы приложения (порядок как в десктопе + «Генератор»). */
     private val tags = listOf(
-        "calendar", "activity", "notes", "nutrition", "knowledge", "assistant",
+        "calendar", "activity", "notes", "nutrition", "knowledge", "generator", "assistant",
     )
 
     /** Разделы в нижней панели; остальные открываются через «Ещё». */
@@ -134,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         val rows = listOf(
             Triple("Питание", R.drawable.ic_nutrition, "nutrition"),
             Triple("База знаний", R.drawable.ic_knowledge, "knowledge"),
+            Triple("Генератор", R.drawable.ic_generator, "generator"),
             Triple("Ассистент", R.drawable.ic_assistant, "assistant"),
         )
         for ((label, iconRes, key) in rows) {
@@ -201,6 +202,7 @@ class MainActivity : AppCompatActivity() {
         "notes" -> com.revaks.longevity.ui.notes.NotesFragment()
         "nutrition" -> com.revaks.longevity.ui.nutrition.NutritionFragment()
         "knowledge" -> KnowledgeFragment()
+        "generator" -> com.revaks.longevity.ui.generator.GeneratorFragment()
         "assistant" -> AssistantFragment()
         else -> com.revaks.longevity.ui.calendar.CalendarFragment()
     }

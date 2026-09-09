@@ -11,8 +11,8 @@ android {
         applicationId = "com.revaks.longevity"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.2.0"
 
         // Данные приложения (советы, расписание, MIND, книги) лежат в assets
         // и в сборку не перекомпилируются.
@@ -59,6 +59,10 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
+
+    // Опциональная on-device нейросеть (LLM Inference). Модель не входит в APK:
+    // её скачивают или импортируют в приложение отдельно.
+    implementation("com.google.mediapipe:tasks-genai:0.10.14")
 
     testImplementation("junit:junit:4.13.2")
     // Для JVM-тестов ядра: на Android org.json встроен, в локальных тестах его нет.
