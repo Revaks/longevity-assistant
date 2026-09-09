@@ -2,7 +2,5 @@
     <string name="nav_calendar">Календарь</string>
     <string name="nav_activity">Активность</string>
     <string name="nav_notes">Заметки</string>
-    <string name="nav_nutrition">Питание</string>
-    <string name="nav_knowledge">Знания</string>
-    <string name="nav_assistant">Ассистент</string>
+    <string name="nav_more">Ещё</string>
 </resources>

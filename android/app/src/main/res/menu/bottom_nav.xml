@@ -13,15 +13,7 @@
         android:icon="@drawable/ic_notes"
         android:title="@string/nav_notes" />
     <item
-        android:id="@+id/nav_nutrition"
-        android:icon="@drawable/ic_nutrition"
-        android:title="@string/nav_nutrition" />
-    <item
-        android:id="@+id/nav_knowledge"
-        android:icon="@drawable/ic_knowledge"
-        android:title="@string/nav_knowledge" />
-    <item
-        android:id="@+id/nav_assistant"
-        android:icon="@drawable/ic_assistant"
-        android:title="@string/nav_assistant" />
+        android:id="@+id/nav_more"
+        android:icon="@drawable/ic_more"
+        android:title="@string/nav_more" />
 </menu>

@@ -1,16 +1,26 @@
 package com.revaks.longevity.ui
 
 import android.os.Bundle
+import android.util.TypedValue
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.revaks.longevity.LongevityApp
+import com.revaks.longevity.R
 import com.revaks.longevity.databinding.ActivityMainBinding
 import com.revaks.longevity.databinding.ActivityLoadingBinding
 import com.revaks.longevity.ui.assistant.AssistantFragment
 import com.revaks.longevity.ui.knowledge.KnowledgeFragment
 
 /**
- * Главное окно: нижняя навигация по шести вкладкам, как у десктопа.
+ * Главное окно. Внизу — три главных раздела (Календарь, Активность, Заметки)
+ * и «Ещё», в котором живут справочные разделы: Питание, База знаний,
+ * Ассистент. BottomNavigationView рассчитан максимум на 5 пунктов, поэтому
+ * шестой раздел не помещается в нижнюю панель.
  * До готовности данных (загрузка книг) показывает экран загрузки.
  */
 class MainActivity : AppCompatActivity() {
@@ -19,12 +29,18 @@ class MainActivity : AppCompatActivity() {
     private var loading: ActivityLoadingBinding? = null
     private var main: ActivityMainBinding? = null
     private var restoredTab: String? = null
+    private var suppressNav = false
+    private var currentKey = "calendar"
 
     private val listener = { onStateChanged() }
 
+    /** Все шесть разделов приложения (порядок как в десктопе). */
     private val tags = listOf(
         "calendar", "activity", "notes", "nutrition", "knowledge", "assistant",
     )
+
+    /** Разделы в нижней панели; остальные открываются через «Ещё». */
+    private val barKeys = setOf("calendar", "activity", "notes")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,24 +85,89 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.bottomNav.setOnItemSelectedListener { item ->
-            val key = when (item.itemId) {
-                com.revaks.longevity.R.id.nav_calendar -> "calendar"
-                com.revaks.longevity.R.id.nav_activity -> "activity"
-                com.revaks.longevity.R.id.nav_notes -> "notes"
-                com.revaks.longevity.R.id.nav_nutrition -> "nutrition"
-                com.revaks.longevity.R.id.nav_knowledge -> "knowledge"
-                else -> "assistant"
+            when (item.itemId) {
+                R.id.nav_calendar -> showTab("calendar")
+                R.id.nav_activity -> showTab("activity")
+                R.id.nav_notes -> showTab("notes")
+                R.id.nav_more -> {
+                    if (!suppressNav) showMoreSheet()
+                    suppressNav = false
+                }
             }
-            showTab(key)
             true
         }
 
         val saved = restoredTab ?: "calendar"
-        binding.bottomNav.selectedItemId = menuId(saved)
+        // Восстанавливаем вкладку: выбираем пункт панели (для разделов «Ещё» —
+        // сам пункт «Ещё», без открытия листа).
+        suppressNav = true
+        binding.bottomNav.selectedItemId = menuIdOf(saved)
+        suppressNav = false
         showTab(saved)
     }
 
+    /** Открыть раздел из списка «Ещё» (Питание / База знаний / Ассистент). */
+    private fun openSecondary(key: String) {
+        val binding = main ?: return
+        suppressNav = true
+        binding.bottomNav.selectedItemId = R.id.nav_more
+        suppressNav = false
+        showTab(key)
+    }
+
+    /** Нижний лист «Ещё» с остальными разделами. */
+    private fun showMoreSheet() {
+        val activity = this
+        val dialog = BottomSheetDialog(activity)
+        val column = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(6), dp(12), dp(18))
+        }
+        val title = TextView(activity).apply {
+            text = "Разделы"
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(activity, R.color.text_muted))
+            setPadding(dp(16), dp(6), dp(16), dp(4))
+        }
+        column.addView(title)
+
+        val rows = listOf(
+            Triple("Питание", R.drawable.ic_nutrition, "nutrition"),
+            Triple("База знаний", R.drawable.ic_knowledge, "knowledge"),
+            Triple("Ассистент", R.drawable.ic_assistant, "assistant"),
+        )
+        for ((label, iconRes, key) in rows) {
+            val row = TextView(activity).apply {
+                text = label
+                textSize = 16f
+                setTextColor(ContextCompat.getColor(activity, R.color.text_primary))
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(15), dp(16), dp(15))
+                val icon = ContextCompat.getDrawable(activity, iconRes)
+                icon?.setTint(ContextCompat.getColor(activity, R.color.primary))
+                setCompoundDrawablesWithIntrinsicBounds(icon, null, null, null)
+                compoundDrawablePadding = dp(16)
+                val out = TypedValue()
+                activity.theme.resolveAttribute(
+                    android.R.attr.selectableItemBackground, out, true
+                )
+                setBackgroundResource(out.resourceId)
+                setOnClickListener {
+                    dialog.dismiss()
+                    openSecondary(key)
+                }
+            }
+            column.addView(row)
+        }
+        dialog.setContentView(column)
+        dialog.show()
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
     private fun showTab(key: String) {
+        currentKey = key
         val fm = supportFragmentManager
         val ft = fm.beginTransaction()
         for (tagKey in tags) {
@@ -113,28 +194,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putString(KEY_TAB, currentTab())
+        outState.putString(KEY_TAB, currentKey)
     }
 
-    private fun currentTab(): String {
-        val binding = main ?: return "calendar"
-        return when (binding.bottomNav.selectedItemId) {
-            com.revaks.longevity.R.id.nav_calendar -> "calendar"
-            com.revaks.longevity.R.id.nav_activity -> "activity"
-            com.revaks.longevity.R.id.nav_notes -> "notes"
-            com.revaks.longevity.R.id.nav_nutrition -> "nutrition"
-            com.revaks.longevity.R.id.nav_knowledge -> "knowledge"
-            else -> "assistant"
-        }
-    }
-
-    private fun menuId(key: String): Int = when (key) {
-        "activity" -> com.revaks.longevity.R.id.nav_activity
-        "notes" -> com.revaks.longevity.R.id.nav_notes
-        "nutrition" -> com.revaks.longevity.R.id.nav_nutrition
-        "knowledge" -> com.revaks.longevity.R.id.nav_knowledge
-        "assistant" -> com.revaks.longevity.R.id.nav_assistant
-        else -> com.revaks.longevity.R.id.nav_calendar
+    private fun menuIdOf(key: String): Int = when (key) {
+        "activity" -> R.id.nav_activity
+        "notes" -> R.id.nav_notes
+        "calendar" -> R.id.nav_calendar
+        else -> R.id.nav_more
     }
 
     companion object {
