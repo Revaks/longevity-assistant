@@ -1,5 +1,6 @@
 package com.revaks.longevity.ui.generator
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -115,10 +116,13 @@ class GeneratorFragment : Fragment() {
             .setMessage(
                 "Укажите прямую ссылку на файл модели MediaPipe LLM (.task).\n" +
                     "Модель скачивается один раз и хранится локально; генерация после " +
-                    "этого работает офлайн."
+                    "этого работает офлайн.\n\n" +
+                    "Где взять файл: нажмите «Открыть страницу загрузки» — откроется " +
+                    "официальная документация MediaPipe с разделом Models."
             )
             .setView(input)
             .setNegativeButton("Отмена", null)
+            .setNeutralButton("Открыть страницу загрузки") { _, _ -> openModelPage() }
             .setPositiveButton("Скачать") { _, _ ->
                 val url = input.text.toString().trim()
                 if (url.isNotEmpty()) {
@@ -127,6 +131,16 @@ class GeneratorFragment : Fragment() {
                 }
             }
             .show()
+    }
+
+    /** Открыть в браузере официальную страницу с моделями MediaPipe LLM. */
+    private fun openModelPage() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(MODEL_PAGE_URL))
+            startActivity(intent)
+        } catch (e: Exception) {
+            binding.tvModelStatus.text = "Не удалось открыть браузер."
+        }
     }
 
     private fun startDownload(url: String) {
@@ -417,6 +431,13 @@ class GeneratorFragment : Fragment() {
     }
 
     companion object {
+        /**
+         * Официальная страница MediaPipe LLM Inference: раздел «Models»,
+         * где публикуются ссылки на файлы .task (Kaggle).
+         */
+        private const val MODEL_PAGE_URL =
+            "https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference#models"
+
         private val MENU_PROMPT: String = """
             Ты — диетолог, специалист по средиземноморско-скандинавской диете MIND.
             Составь недельное меню (7 дней) по правилам MIND: цельные злаки ежедневно,
