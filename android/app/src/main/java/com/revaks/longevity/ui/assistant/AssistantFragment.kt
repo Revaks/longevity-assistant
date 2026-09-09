@@ -20,6 +20,9 @@ import com.revaks.longevity.R
 import com.revaks.longevity.core.AssistantEngine
 import com.revaks.longevity.databinding.FragmentAssistantBinding
 import com.revaks.longevity.databinding.ItemChatBinding
+import com.revaks.longevity.llm.GroundedPrompts
+import com.revaks.longevity.llm.LlmSession
+import com.revaks.longevity.llm.ModelManager
 import com.revaks.longevity.ui.Ui
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -28,8 +31,10 @@ import java.util.concurrent.Executors
 private data class ChatItem(val isUser: Boolean, val text: String, val thinking: Boolean = false)
 
 /**
- * Вкладка «Умный ассистент»: офлайн-ответы по базе знаний
- * (расписание, советы, отрывки книг через BM25).
+ * Вкладка «Умный ассистент»: ответы по базе знаний (расписание, советы, отрывки
+ * книг через BM25). Если установлена модель нейросети (MediaPipe LLM) — ответ
+ * собирается нейросетью по RAG-контексту из данных приложения, а при сбое
+ * автоматически включается офлайн-движок.
  */
 class AssistantFragment : Fragment() {
 
@@ -60,6 +65,11 @@ class AssistantFragment : Fragment() {
         binding.rvChat.adapter = adapter
 
         buildQuickChips(ready.content.quickQuestions)
+
+        binding.tvModelStatus.text = if (ModelManager.modelPath(app) != null)
+            "Нейросеть: ответы по вашим данным (RAG: советы, книги, MIND). План дня/расписание — офлайн."
+        else
+            "Нейросеть не установлена — офлайн-ответы по базе знаний."
 
         binding.btnSend.setOnClickListener { sendFromInput() }
         binding.etInput.setOnEditorActionListener { _, _, _ ->
@@ -110,7 +120,7 @@ class AssistantFragment : Fragment() {
 
         worker.execute {
             val answer = try {
-                AssistantEngine.answer(ready.content, ready.index, ready.bookSearch, text)
+                answerQuestion(ready, text)
             } catch (e: Exception) {
                 "Не удалось подготовить ответ: ${e.message ?: e.javaClass.simpleName}"
             }
@@ -125,6 +135,31 @@ class AssistantFragment : Fragment() {
                 render()
             }
         }
+    }
+
+    /**
+     * Ответ на вопрос: при установленной нейросети — RAG-промпт с реальными
+     * данными приложения (советы/книги/MIND через BM25), при сбое или без
+     * модели — офлайн-движок. Вопросы про план/расписание всегда офлайн,
+     * т.к. в RAG-контекст книг расписание не попадает.
+     */
+    private fun answerQuestion(ready: LongevityApp.State.Ready, query: String): String {
+        if (AssistantEngine.wantsSchedule(query)) {
+            return AssistantEngine.answer(ready.content, ready.index, ready.bookSearch, query)
+        }
+        val model = LlmSession.current() ?: LlmSession.load(app)
+        if (model != null) {
+            try {
+                val prompt = GroundedPrompts.chatPrompt(
+                    ready.content, ready.index, ready.bookSearch, query,
+                )
+                val text = model.generate(prompt).trim()
+                if (text.isNotEmpty()) return text
+            } catch (e: Exception) {
+                // модель недоступна — отвечает офлайн-движок
+            }
+        }
+        return AssistantEngine.answer(ready.content, ready.index, ready.bookSearch, query)
     }
 
     private fun setInputEnabled(enabled: Boolean) {

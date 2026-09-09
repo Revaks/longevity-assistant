@@ -7,13 +7,15 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInference
  * Лёгкая обёртка над MediaPipe LLM Inference (on-device нейросеть).
  *
  * Создание инстанса загружает модель в память — делать это нужно в фоне.
- * Экземпляр не потокобезопасен, вызовы generate() сериализуем вызывающим кодом.
+ * Через [LlmSession] инстанс один на процесс, поэтому вызовы generate()
+ * сериализуются на самом инстансе.
  */
 class LocalLlm private constructor(
     val modelPath: String,
     private val inference: LlmInference,
 ) {
     /** Синхронная генерация. Не вызывать из главного потока. */
+    @Synchronized
     fun generate(prompt: String): String = inference.generateResponse(prompt)
 
     fun close() {

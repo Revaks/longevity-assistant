@@ -22,6 +22,8 @@ import com.revaks.longevity.core.gen.MealGenerator
 import com.revaks.longevity.core.gen.WorkoutGenerator
 import com.revaks.longevity.core.gen.WorkoutProgram
 import com.revaks.longevity.databinding.FragmentGeneratorBinding
+import com.revaks.longevity.llm.GroundedPrompts
+import com.revaks.longevity.llm.LlmSession
 import com.revaks.longevity.llm.LocalLlm
 import com.revaks.longevity.llm.ModelDownloader
 import com.revaks.longevity.llm.ModelManager
@@ -48,9 +50,7 @@ class GeneratorFragment : Fragment() {
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
-    /** Загруженный экземпляр нейросети (null, пока модель не используется). */
-    @Volatile
-    private var llm: LocalLlm? = null
+    /** Идёт ли загрузка модели (защита от повторной параллельной загрузки). */
     @Volatile
     private var llmLoading = false
 
@@ -77,8 +77,7 @@ class GeneratorFragment : Fragment() {
             importModel.launch(arrayOf("*/*"))
         }
         binding.btnModelRemove.setOnClickListener {
-            worker.execute { llm?.close() }
-            llm = null
+            worker.execute { LlmSession.reset() }
             ModelManager.forget(requireContext())
             refreshModelStatus()
         }
@@ -168,6 +167,7 @@ class GeneratorFragment : Fragment() {
                     binding.btnModelDownload.isEnabled = true
                     result.onSuccess { file ->
                         ModelManager.remember(ctx, file)
+                        LlmSession.reset()
                         binding.tvModelStatus.text = "Модель скачана. Генерация через нейросеть."
                     }.onFailure { e ->
                         binding.tvModelStatus.text =
@@ -188,6 +188,7 @@ class GeneratorFragment : Fragment() {
                     target.outputStream().use { output -> input.copyTo(output) }
                 } ?: error("Не удалось открыть файл")
                 ModelManager.remember(ctx, target)
+                LlmSession.reset()
             }.onFailure { e ->
                 main.post {
                     binding.tvModelStatus.text =
@@ -210,8 +211,8 @@ class GeneratorFragment : Fragment() {
 
     /** Загрузить модель, если она установлена; вызвать [onResult]. */
     private fun ensureLlm(onResult: (LocalLlm?) -> Unit) {
-        if (llm != null) {
-            onResult(llm)
+        LlmSession.current()?.let { cached ->
+            onResult(cached)
             return
         }
         if (llmLoading) {
@@ -219,19 +220,17 @@ class GeneratorFragment : Fragment() {
             main.postDelayed({ ensureLlm(onResult) }, 500)
             return
         }
-        val ctx = requireContext()
-        val path = ModelManager.modelPath(ctx)
-        if (path == null) {
+        if (ModelManager.modelPath(app) == null) {
             onResult(null)
             return
         }
         llmLoading = true
-        main.post { binding.tvModelStatus.text = "Загружаю модель в память…" }
+        main.post { if (_binding != null) binding.tvModelStatus.text = "Загружаю модель в память…" }
         worker.execute {
-            val loaded = LocalLlm.load(ctx, path)
-            llm = loaded
+            val loaded = LlmSession.load(app)
             llmLoading = false
             main.post {
+                if (!isAdded || _binding == null) return@post
                 if (loaded == null) {
                     binding.tvModelStatus.text =
                         "Не удалось загрузить модель (возможно, файл не подходит). " +
@@ -245,6 +244,7 @@ class GeneratorFragment : Fragment() {
     // ------------------------------------------------------------------ меню
 
     private fun generateMenu() {
+        val ready = app.state as? LongevityApp.State.Ready ?: return
         val target = binding.llMenuResult
         target.removeAllViews()
         binding.tvMenuNote.visibility = View.VISIBLE
@@ -259,10 +259,16 @@ class GeneratorFragment : Fragment() {
                 var menu: List<MenuDay>? = null
                 if (model != null) {
                     try {
-                        val text = model.generate(MENU_PROMPT)
+                        val prompt = GroundedPrompts.menuPrompt(
+                            ready.content, ready.index, ready.bookSearch,
+                        )
+                        val text = model.generate(prompt)
                         menu = parseMenu(text)
-                        if (menu != null) note = "Меню сгенерировано нейросетью."
-                        else note = "Нейросеть вернула не JSON — показано меню встроенного генератора."
+                        if (menu != null) {
+                            note = "Меню сгенерировано нейросетью по RAG-контексту (MIND + книги)."
+                        } else {
+                            note = "Нейросеть вернула не JSON — показано меню встроенного генератора."
+                        }
                     } catch (e: Exception) {
                         note = "Нейросеть недоступна (${e.message ?: "ошибка"}) — " +
                             "встроенный генератор."
@@ -328,6 +334,7 @@ class GeneratorFragment : Fragment() {
     // ------------------------------------------------------------------ тренировки
 
     private fun generateWorkout() {
+        val ready = app.state as? LongevityApp.State.Ready ?: return
         val level = when (binding.rgLevel.checkedButtonId) {
             R.id.mb_level_easy -> WorkoutGenerator.LEVELS[0]
             R.id.mb_level_hard -> WorkoutGenerator.LEVELS[2]
@@ -347,13 +354,16 @@ class GeneratorFragment : Fragment() {
                 var llmText: String? = null
                 if (model != null) {
                     try {
-                        val prompt = WORKOUT_PROMPT.replace("{level}", level)
+                        val prompt = GroundedPrompts.workoutPrompt(
+                            ready.content, ready.index, ready.bookSearch, level,
+                        )
                         llmText = model.generate(prompt).trim()
                         if (llmText.isNullOrEmpty()) {
                             note = "Нейросеть вернула пустой ответ — встроенный генератор."
                             llmText = null
                         } else {
-                            note = "Программа сгенерирована нейросетью (уровень: $level)."
+                            note = "Программа сгенерирована нейросетью " +
+                                "по RAG-контексту (уровень: $level)."
                         }
                     } catch (e: Exception) {
                         note = "Нейросеть недоступна — встроенный генератор."
@@ -437,24 +447,5 @@ class GeneratorFragment : Fragment() {
          */
         private const val MODEL_PAGE_URL =
             "https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference#models"
-
-        private val MENU_PROMPT: String = """
-            Ты — диетолог, специалист по средиземноморско-скандинавской диете MIND.
-            Составь недельное меню (7 дней) по правилам MIND: цельные злаки ежедневно,
-            ягоды 2+ раза, орехи, зелёные листовые овощи, оливковое масло, бобовые 3+ раз,
-            птица вместо красного мяса, жирная рыба 2–3 раза в неделю, ужин за 3–4 часа до сна,
-            минимум сахара и соли, без жарки (готовка до 120 °C).
-            Ответь строго JSON-массивом из 7 объектов с ключами:
-            day, breakfast, lunch, dinner, snack. Без текста вокруг.
-        """.trimIndent()
-
-        private val WORKOUT_PROMPT: String = """
-            Ты — тренер по оздоровительной физкультуре, работаешь по принципам
-            А. А. Москалева: аэробная нагрузка 30–60 минут 3–5 раз в неделю, силовые
-            упражнения на основные группы мышц 2 раза в неделю, ежедневная умеренная
-            активность. Составь программу тренировок на неделю для уровня: {level}.
-            Для каждого дня недели (Понедельник..Воскресенье) напиши: день, время и
-            конкретные упражнения/активность. Отвечай по-русски, кратко, списком дней.
-        """.trimIndent()
     }
 }

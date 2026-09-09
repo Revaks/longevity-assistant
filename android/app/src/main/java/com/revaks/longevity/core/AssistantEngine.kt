@@ -124,4 +124,10 @@ object AssistantEngine {
     fun isAboutNutrition(query: String): Boolean =
         Text.analyze(query).any { it in NUTRITION_STEMS } ||
             Text.tokenize(query).any { it in NUTRITION_WORDS }
+
+    /** Про план/расписание ли вопрос — такие вопросы всегда отвечает офлайн-движок. */
+    fun wantsSchedule(query: String): Boolean {
+        val terms = Text.analyze(query).toSet()
+        return terms.any { it in CALENDAR_STEMS } || terms.any { it in PLAN_STEMS }
+    }
 }
