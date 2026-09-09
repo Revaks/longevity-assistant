@@ -38,8 +38,8 @@ import kotlin.random.Random
  * Вкладка «Генератор»: меню недели (MIND) и программа тренировок.
  *
  * По умолчанию работает встроенный генератор на каталогах из книг.
- * Если установлена модель нейросети (MediaPipe LLM), запрос уходит модели,
- * а при сбое автоматически включается встроенный генератор.
+ * Если установлена модель нейросети (LiteRT-LM, .litertlm), запрос уходит
+ * модели, а при сбое автоматически включается встроенный генератор.
  */
 class GeneratorFragment : Fragment() {
 
@@ -107,17 +107,17 @@ class GeneratorFragment : Fragment() {
 
     private fun askDownloadUrl() {
         val input = EditText(requireContext()).apply {
-            hint = "https://…/model.task"
+            hint = "https://…/model.litertlm"
             setText(lastModelUrl())
         }
         MaterialAlertDialogBuilder(requireContext())
             .setTitle("Скачать модель")
             .setMessage(
-                "Укажите прямую ссылку на файл модели MediaPipe LLM (.task).\n" +
+                "Укажите прямую ссылку на файл модели LiteRT-LM (.litertlm).\n" +
                     "Модель скачивается один раз и хранится локально; генерация после " +
                     "этого работает офлайн.\n\n" +
                     "Где взять файл: нажмите «Открыть страницу загрузки» — откроется " +
-                    "официальная документация MediaPipe с разделом Models."
+                    "репозиторий моделей LiteRT (Gemma 4 E2B)."
             )
             .setView(input)
             .setNegativeButton("Отмена", null)
@@ -132,7 +132,7 @@ class GeneratorFragment : Fragment() {
             .show()
     }
 
-    /** Открыть в браузере официальную страницу с моделями MediaPipe LLM. */
+    /** Открыть в браузере страницу с моделями LiteRT (.litertlm). */
     private fun openModelPage() {
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(MODEL_PAGE_URL))
@@ -144,7 +144,7 @@ class GeneratorFragment : Fragment() {
 
     private fun startDownload(url: String) {
         val ctx = requireContext()
-        val fileName = "model.task"
+        val fileName = "model.litertlm"
         val target = ModelManager.modelFile(ctx, fileName)
         binding.progressModel.visibility = View.VISIBLE
         binding.progressModel.progress = 0
@@ -182,7 +182,7 @@ class GeneratorFragment : Fragment() {
         val ctx = requireContext()
         binding.tvModelStatus.text = "Импортирую модель…"
         worker.execute {
-            val target = ModelManager.modelFile(ctx, "model-import.task")
+            val target = ModelManager.modelFile(ctx, "model-import.litertlm")
             runCatching {
                 ctx.contentResolver.openInputStream(uri)?.use { input ->
                     target.outputStream().use { output -> input.copyTo(output) }
@@ -442,10 +442,10 @@ class GeneratorFragment : Fragment() {
 
     companion object {
         /**
-         * Официальная страница MediaPipe LLM Inference: раздел «Models»,
-         * где публикуются ссылки на файлы .task (Kaggle).
+         * Репозиторий моделей LiteRT-LM (.litertlm) на HuggingFace —
+         * здесь опубликованы Gemma 4 E2B и другие on-device модели.
          */
         private const val MODEL_PAGE_URL =
-            "https://ai.google.dev/edge/mediapipe/solutions/genai/llm_inference#models"
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/tree/main"
     }
 }

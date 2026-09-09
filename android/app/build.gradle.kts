@@ -11,8 +11,8 @@ android {
         applicationId = "com.revaks.longevity"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.1"
+        versionCode = 7
+        versionName = "0.3.0"
 
         // Данные приложения (советы, расписание, MIND, книги) лежат в assets
         // и в сборку не перекомпилируются.
@@ -37,10 +37,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         viewBinding = true
     }
@@ -52,6 +48,12 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
@@ -60,9 +62,9 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.fragment:fragment-ktx:1.8.5")
 
-    // Опциональная on-device нейросеть (LLM Inference). Модель не входит в APK:
-    // её скачивают или импортируют в приложение отдельно.
-    implementation("com.google.mediapipe:tasks-genai:0.10.14")
+    // Опциональная on-device нейросеть (LiteRT-LM, формат .litertlm — Gemma 4 E2B и др.).
+    // Модель не входит в APK: файл (~2–3 ГБ) скачивают или импортируют в приложение отдельно.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.0")
 
     testImplementation("junit:junit:4.13.2")
     // Для JVM-тестов ядра: на Android org.json встроен, в локальных тестах его нет.

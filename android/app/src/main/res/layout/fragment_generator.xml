@@ -110,7 +110,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="Модель MediaPipe (.task, 0.7–2 ГБ) скачивается один раз и работает офлайн. Без модели генерация работает во встроенном режиме."
+                    android:text="Модель LiteRT-LM (.litertlm, Gemma 4 E2B — около 2–3 ГБ) скачивается один раз и работает офлайн. Без модели генерация работает во встроенном режиме."
                     android:textColor="@color/text_muted"
                     android:textSize="11sp" />
             </LinearLayout>
