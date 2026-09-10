@@ -40,6 +40,12 @@ object ModelDownloader {
                     tmp.copyTo(target, overwrite = true)
                     tmp.delete()
                 }
+                if (connection.contentLengthLong > 0 && target.length() != connection.contentLengthLong) {
+                    error(
+                        "загрузка неполная: ${target.length()} из " +
+                            "${connection.contentLengthLong} байт"
+                    )
+                }
                 target
             }
             onDone(result)

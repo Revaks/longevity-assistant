@@ -1,6 +1,7 @@
 package com.revaks.longevity.llm
 
 import android.content.Context
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -50,23 +51,42 @@ class LocalLlm private constructor(
     }
 
     companion object {
+        private const val TAG = "LongevityLlm"
+
+        /** Текст последней ошибки загрузки — показывается в интерфейсе. */
+        @Volatile
+        var lastError: String? = null
+            private set
+
         /**
-         * Пытается загрузить модель на CPU-бэкенде (XNNPack, работает на любом
-         * современном устройстве); при любой ошибке возвращает null.
+         * Пытается загрузить модель. Бэкенды перебираются по очереди:
+         * сначала CPU (XNNPack — работает везде), затем GPU.
+         * При любой ошибке возвращает null, а причину кладёт в [lastError].
          */
-        fun load(context: Context, modelPath: String, maxTokens: Int = 1024): LocalLlm? =
-            try {
-                val cacheDir = runCatching { context.cacheDir.absolutePath }.getOrNull()
-                val engine = Engine(
-                    EngineConfig(
-                        modelPath = modelPath,
-                        backend = Backend.CPU(),
-                        cacheDir = cacheDir,
-                    )
-                ).also { it.initialize() }
-                LocalLlm(modelPath, engine, maxTokens)
-            } catch (t: Throwable) {
-                null
+        fun load(context: Context, modelPath: String, maxTokens: Int = 1024): LocalLlm? {
+            lastError = null
+            val cacheDir = runCatching { context.cacheDir.absolutePath }.getOrNull()
+            val errors = ArrayList<String>()
+            for ((name, backend) in listOf("CPU" to Backend.CPU(), "GPU" to Backend.GPU())) {
+                try {
+                    val engine = Engine(
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = backend,
+                            cacheDir = cacheDir,
+                        )
+                    ).also { it.initialize() }
+                    Log.i(TAG, "Модель загружена ($name): $modelPath")
+                    return LocalLlm(modelPath, engine, maxTokens)
+                } catch (t: Throwable) {
+                    val reason = t.message?.takeIf { it.isNotBlank() }
+                        ?: t.javaClass.simpleName
+                    Log.e(TAG, "Не удалось загрузить модель на $name: $reason", t)
+                    errors.add("$name: $reason")
+                }
             }
+            lastError = errors.joinToString("; ")
+            return null
+        }
     }
 }

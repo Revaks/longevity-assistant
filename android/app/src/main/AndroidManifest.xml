@@ -12,6 +12,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Longevity">
 
+        <!-- Нативные библиотеки GPU-бэкенда LiteRT-LM: нужны только для
+             ускорения, при их отсутствии движок работает на CPU. -->
+        <uses-native-library
+            android:name="libvndksupport.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

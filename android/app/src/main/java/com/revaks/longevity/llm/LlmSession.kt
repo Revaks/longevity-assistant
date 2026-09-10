@@ -19,6 +19,9 @@ object LlmSession {
     /** Уже загруженный экземпляр (без попытки загрузки). */
     fun current(): LocalLlm? = instance
 
+    /** Причина последней неудачной загрузки модели (для интерфейса и логов). */
+    val lastError: String? get() = LocalLlm.lastError
+
     /** Загрузить модель, если она установлена (вызывать из фонового потока). */
     fun load(context: Context): LocalLlm? {
         val path = ModelManager.modelPath(context) ?: return null

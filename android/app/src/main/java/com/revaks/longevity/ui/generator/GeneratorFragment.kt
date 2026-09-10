@@ -232,9 +232,9 @@ class GeneratorFragment : Fragment() {
             main.post {
                 if (!isAdded || _binding == null) return@post
                 if (loaded == null) {
+                    val reason = LlmSession.lastError ?: "неизвестная ошибка"
                     binding.tvModelStatus.text =
-                        "Не удалось загрузить модель (возможно, файл не подходит). " +
-                            "Работает встроенный генератор."
+                        "Не удалось загрузить модель: $reason. Работает встроенный генератор."
                 }
                 onResult(loaded)
             }
