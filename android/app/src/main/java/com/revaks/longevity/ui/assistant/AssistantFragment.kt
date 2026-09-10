@@ -117,19 +117,38 @@ class AssistantFragment : Fragment() {
         append(ChatItem(isUser = true, text = text))
         append(ChatItem(isUser = false, text = "Думаю...", thinking = true))
         render()
+        val streamIndex = messages.size - 1
 
         worker.execute {
+            val streamed = StringBuilder()
+            var lastPost = 0L
             val answer = try {
-                answerQuestion(ready, text)
+                answerQuestion(ready, text) { piece ->
+                    streamed.append(piece)
+                    val now = System.currentTimeMillis()
+                    if (now - lastPost > 150) {
+                        lastPost = now
+                        val current = streamed.toString()
+                        mainHandler.post {
+                            if (!isAdded || _binding == null) return@post
+                            if (streamIndex in messages.indices) {
+                                messages[streamIndex] = ChatItem(isUser = false, text = current)
+                                render()
+                            }
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 "Не удалось подготовить ответ: ${e.message ?: e.javaClass.simpleName}"
             }
             mainHandler.post {
                 if (!isAdded || _binding == null) return@post
-                // Заменяем «Думаю...» готовым ответом.
-                val idx = messages.indexOfLast { it.thinking }
-                if (idx >= 0) messages[idx] = ChatItem(isUser = false, text = answer)
-                else messages.add(ChatItem(isUser = false, text = answer))
+                // Заменяем «Думаю...»/поток готовым ответом.
+                if (streamIndex in messages.indices) {
+                    messages[streamIndex] = ChatItem(isUser = false, text = answer)
+                } else {
+                    messages.add(ChatItem(isUser = false, text = answer))
+                }
                 busy = false
                 setInputEnabled(true)
                 render()
@@ -143,7 +162,11 @@ class AssistantFragment : Fragment() {
      * модели — офлайн-движок. Вопросы про план/расписание всегда офлайн,
      * т.к. в RAG-контекст книг расписание не попадает.
      */
-    private fun answerQuestion(ready: LongevityApp.State.Ready, query: String): String {
+    private fun answerQuestion(
+        ready: LongevityApp.State.Ready,
+        query: String,
+        onPiece: (String) -> Unit,
+    ): String {
         if (AssistantEngine.wantsSchedule(query)) {
             return AssistantEngine.answer(ready.content, ready.index, ready.bookSearch, query)
         }
@@ -153,7 +176,7 @@ class AssistantFragment : Fragment() {
                 val prompt = GroundedPrompts.chatPrompt(
                     ready.content, ready.index, ready.bookSearch, query,
                 )
-                val text = model.generate(prompt).trim()
+                val text = model.generate(prompt, onPiece)
                 if (text.isNotEmpty()) return text
             } catch (e: Exception) {
                 // модель недоступна — отвечает офлайн-движок

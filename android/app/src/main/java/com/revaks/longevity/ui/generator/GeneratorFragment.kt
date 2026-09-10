@@ -54,6 +54,9 @@ class GeneratorFragment : Fragment() {
     @Volatile
     private var llmLoading = false
 
+    /** TextView для постепенного вывода текста нейросети (тренировки). */
+    private var streamingView: TextView? = null
+
     private val importModel =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             android.util.Log.i("LongevityLlm", "Импорт: выбран файл uri=$uri")
@@ -285,6 +288,10 @@ class GeneratorFragment : Fragment() {
                     val reason = LlmSession.lastError ?: "неизвестная ошибка"
                     binding.tvModelStatus.text =
                         "Не удалось загрузить модель: $reason. Работает встроенный генератор."
+                } else {
+                    binding.tvModelStatus.text =
+                        "Модель загружена (бэкенд ${loaded.backendName}). " +
+                            "Генерация через нейросеть."
                 }
                 onResult(loaded)
             }
@@ -297,12 +304,13 @@ class GeneratorFragment : Fragment() {
         val ready = app.state as? LongevityApp.State.Ready ?: return
         val target = binding.llMenuResult
         target.removeAllViews()
+        streamingView = null
         binding.tvMenuNote.visibility = View.VISIBLE
         binding.tvMenuNote.text = "Генерирую…"
         binding.btnMenuGenerate.isEnabled = false
         ensureLlm { model ->
             if (model != null) {
-                binding.tvMenuNote.text = "Нейросеть думает (может занять минуту)…"
+                binding.tvMenuNote.text = "Нейросеть пишет ответ…"
             }
             worker.execute {
                 var note = "Сгенерировано встроенным генератором (MIND)."
@@ -312,7 +320,21 @@ class GeneratorFragment : Fragment() {
                         val prompt = GroundedPrompts.menuPrompt(
                             ready.content, ready.index, ready.bookSearch,
                         )
-                        val text = model.generate(prompt)
+                        var streamed = 0
+                        var lastPost = 0L
+                        val text = model.generate(prompt) { piece ->
+                            streamed += piece.length
+                            val now = System.currentTimeMillis()
+                            if (now - lastPost > 150) {
+                                lastPost = now
+                                val chars = streamed
+                                main.post {
+                                    if (_binding == null) return@post
+                                    binding.tvMenuNote.text =
+                                        "Нейросеть генерирует… $chars символов"
+                                }
+                            }
+                        }
                         menu = parseMenu(text)
                         if (menu != null) {
                             note = "Меню сгенерировано нейросетью по RAG-контексту (MIND + книги)."
@@ -391,13 +413,14 @@ class GeneratorFragment : Fragment() {
             else -> WorkoutGenerator.LEVELS[1]
         }
         binding.llWorkoutResult.removeAllViews()
+        streamingView = null
         binding.tvWorkoutNote.visibility = View.VISIBLE
         binding.tvWorkoutNote.text = "Генерирую…"
         binding.btnWorkoutGenerate.isEnabled = false
 
         ensureLlm { model ->
             if (model != null) {
-                binding.tvWorkoutNote.text = "Нейросеть думает (может занять минуту)…"
+                binding.tvWorkoutNote.text = "Нейросеть пишет ответ…"
             }
             worker.execute {
                 var note = "Сгенерировано встроенным генератором (по книге Москалева)."
@@ -407,7 +430,22 @@ class GeneratorFragment : Fragment() {
                         val prompt = GroundedPrompts.workoutPrompt(
                             ready.content, ready.index, ready.bookSearch, level,
                         )
-                        llmText = model.generate(prompt).trim()
+                        val partial = StringBuilder()
+                        var lastPost = 0L
+                        llmText = model.generate(prompt) { piece ->
+                            partial.append(piece)
+                            val now = System.currentTimeMillis()
+                            if (now - lastPost > 150) {
+                                lastPost = now
+                                val current = partial.toString()
+                                main.post {
+                                    if (_binding == null) return@post
+                                    renderStreamingText(current)
+                                    binding.tvWorkoutNote.text =
+                                        "Нейросеть пишет ответ… ${current.length} символов"
+                                }
+                            }
+                        }.trim()
                         if (llmText.isNullOrEmpty()) {
                             note = "Нейросеть вернула пустой ответ — встроенный генератор."
                             llmText = null
@@ -423,6 +461,7 @@ class GeneratorFragment : Fragment() {
                     WorkoutGenerator.generate(level = level)
                 else null
                 main.post {
+                    if (_binding == null) return@post
                     binding.btnWorkoutGenerate.isEnabled = true
                     if (llmText != null) {
                         renderLlmText(llmText)
@@ -433,6 +472,23 @@ class GeneratorFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /** Постепенный вывод текста нейросети: один TextView, обновляем содержимое. */
+    private fun renderStreamingText(full: String) {
+        val ctx = requireContext()
+        var tv = streamingView
+        if (tv == null) {
+            binding.llWorkoutResult.removeAllViews()
+            tv = TextView(ctx).apply {
+                setTextSize(14f)
+                setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                setTextIsSelectable(true)
+            }
+            streamingView = tv
+            binding.llWorkoutResult.addView(tv)
+        }
+        tv.text = full
     }
 
     private fun renderProgram(program: WorkoutProgram) {
