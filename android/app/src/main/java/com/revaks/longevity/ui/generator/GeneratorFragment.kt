@@ -56,6 +56,7 @@ class GeneratorFragment : Fragment() {
 
     private val importModel =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            android.util.Log.i("LongevityLlm", "Импорт: выбран файл uri=$uri")
             uri ?: return@registerForActivityResult
             importModelFile(uri)
         }
@@ -74,6 +75,7 @@ class GeneratorFragment : Fragment() {
 
         binding.btnModelDownload.setOnClickListener { askDownloadUrl() }
         binding.btnModelImport.setOnClickListener {
+            android.util.Log.i("LongevityLlm", "Импорт: открываю выбор файла")
             importModel.launch(arrayOf("*/*"))
         }
         binding.btnModelRemove.setOnClickListener {
@@ -180,22 +182,70 @@ class GeneratorFragment : Fragment() {
 
     private fun importModelFile(uri: Uri) {
         val ctx = requireContext()
+        val target = ModelManager.modelFile(ctx, "model-import.litertlm")
+        target.parentFile?.mkdirs()
+        binding.progressModel.visibility = View.VISIBLE
+        binding.progressModel.progress = 0
         binding.tvModelStatus.text = "Импортирую модель…"
+        binding.btnModelImport.isEnabled = false
+
         worker.execute {
-            val target = ModelManager.modelFile(ctx, "model-import.litertlm")
             runCatching {
+                val total = runCatching {
+                    ctx.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+                        ?: -1L
+                }.getOrDefault(-1L)
+                var done = 0L
                 ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                } ?: error("Не удалось открыть файл")
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(256 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            done += read
+                            val doneNow = done
+                            if (total > 0) {
+                                val percent = (doneNow * 100 / total).toInt()
+                                main.post {
+                                    if (_binding == null) return@post
+                                    binding.progressModel.progress = percent.coerceIn(0, 100)
+                                    binding.tvModelStatus.text =
+                                        "Импортирую модель… $percent% " +
+                                            "(${ModelManager.humanSize(doneNow)} / " +
+                                            "${ModelManager.humanSize(total)})"
+                                }
+                            } else {
+                                main.post {
+                                    if (_binding == null) return@post
+                                    binding.tvModelStatus.text =
+                                        "Импортирую модель… ${ModelManager.humanSize(doneNow)}"
+                                }
+                            }
+                        }
+                    }
+                } ?: error("Не удалось открыть файл (нет доступа)")
+                if (target.length() == 0L) error("Файл пустой")
                 ModelManager.remember(ctx, target)
                 LlmSession.reset()
-            }.onFailure { e ->
+            }.onSuccess {
+                android.util.Log.i("LongevityLlm", "Модель импортирована: ${target.absolutePath}")
                 main.post {
+                    if (_binding == null) return@post
+                    binding.progressModel.visibility = View.GONE
+                    binding.btnModelImport.isEnabled = true
+                    refreshModelStatus()
+                }
+            }.onFailure { e ->
+                android.util.Log.e("LongevityLlm", "Импорт модели не удался", e)
+                main.post {
+                    if (_binding == null) return@post
+                    binding.progressModel.visibility = View.GONE
+                    binding.btnModelImport.isEnabled = true
                     binding.tvModelStatus.text =
-                        "Не удалось импортировать модель: ${e.message ?: "ошибка"}"
+                        "Не удалось импортировать модель: ${e.message ?: e.javaClass.simpleName}"
                 }
             }
-            main.post { refreshModelStatus() }
         }
     }
 
