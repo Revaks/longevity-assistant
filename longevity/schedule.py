@@ -31,8 +31,17 @@ def _time_key(t: str) -> tuple[int, int, int]:
     return (1, 0, 0)
 
 
+def sort_key(item: ScheduleItem) -> tuple:
+    """Ключ сортировки пункта дня: время показа («часы» раньше «весь день»).
+
+    Отдельная функция — ею же пользуется longevity/plan.py, чтобы свои пункты
+    вставали в те же временные группы, что и базовые, а не отдельным списком.
+    """
+    return _time_key(display_time(item))
+
+
 def get_today_plan(content: Content, day: dt.date) -> list[ScheduleItem]:
     """Пункты расписания на конкретную дату в порядке показа."""
     wd = day.weekday()
     items = [s for s in content.schedule if wd in s.days]
-    return sorted(items, key=lambda s: _time_key(display_time(s)))
+    return sorted(items, key=sort_key)

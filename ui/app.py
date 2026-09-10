@@ -140,7 +140,8 @@ class LongevityApp(tk.Tk):
                                  ("notes", "Заметки", "note"),
                                  ("nutrition", "Питание", "nutrition"),
                                  ("knowledge", "База знаний", "knowledge"),
-                                 ("assistant", "Ассистент", "assistant")):
+                                 ("assistant", "Ассистент", "assistant"),
+                                 ("health", "Здоровье", "health")):
             btn = tk.Button(sidebar, text=label, image=self.theme.icon(icon, 16),
                             compound="left", anchor="w", relief="flat",
                             bg=colors["sidebar"], fg=colors["card"], font=self.theme.font(11),
@@ -171,6 +172,7 @@ class LongevityApp(tk.Tk):
         from .activity_page import ActivityPage
         from .assistant_page import AssistantPage
         from .calendar_page import CalendarPage
+        from .health_page import HealthPage
         from .knowledge_page import KnowledgePage
         from .notes_page import NotesPage
         from .nutrition_page import NutritionPage
@@ -186,7 +188,8 @@ class LongevityApp(tk.Tk):
                          ("notes", NotesPage),
                          ("nutrition", NutritionPage),
                          ("knowledge", KnowledgePage),
-                         ("assistant", AssistantPage)):
+                         ("assistant", AssistantPage),
+                         ("health", HealthPage)):
             page = cls(container, self)
             page.grid(row=0, column=0, sticky="nsew")
             self.pages[key] = page
@@ -210,11 +213,17 @@ class LongevityApp(tk.Tk):
                   "notes": "Заметки (дневник)",
                   "nutrition": "Питание (диета MIND + меню недели)",
                   "knowledge": "База знаний (советы из книги)",
-                  "assistant": "Умный ассистент"}
+                  "assistant": "Умный ассистент",
+                  "health": "Здоровье — биодневник и обследования"}
         self.page_title.config(text=titles[key])
         for k, page in self.pages.items():
             if k == key:
                 page.tkraise()
+                # Страницы, чьи данные меняются из других вкладок, обновляются
+                # при показе; заметки/питание/знания перерисовывать не нужно.
+                on_show = getattr(page, "on_show", None)
+                if callable(on_show):
+                    on_show()
         for k, btn in self.nav_buttons.items():
             if k == key:
                 btn.config(bg=self.theme.colors["sidebar_active"])

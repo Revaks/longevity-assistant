@@ -58,6 +58,7 @@ COLOR_BY_NAME = {
     "nutrition": PALETTE["card"],
     "knowledge": PALETTE["card"],
     "assistant": PALETTE["card"],
+    "health": PALETTE["card"],
     "clock": PALETTE["card"],
     "note": PALETTE["sidebar"],
     "note-light": PALETTE["card"],
@@ -185,6 +186,19 @@ def draw_note(s: int, color: str) -> Image.Image:
     return img
 
 
+def draw_health(s: int, color: str) -> Image.Image:
+    """Скруглённый квадрат с медицинским крестом: биодневник и обследования."""
+    img = _canvas(s)
+    d = ImageDraw.Draw(img)
+    stroke = max(1, round(s * 0.07))
+
+    d.rounded_rectangle([s * 0.30, s * 0.12, s * 0.70, s * 0.88],
+                        radius=s * 0.08, outline=color, width=stroke)
+    d.line([(s * 0.42, s * 0.34), (s * 0.58, s * 0.34)], fill=color, width=stroke)
+    d.line([(s * 0.50, s * 0.26), (s * 0.50, s * 0.74)], fill=color, width=stroke)
+    return img
+
+
 def draw_clock(s: int, color: str) -> Image.Image:
     """Окружность со стрелками."""
     img = _canvas(s)
@@ -219,6 +233,7 @@ ICONS = {
     "nutrition": draw_nutrition,
     "knowledge": draw_knowledge,
     "assistant": draw_assistant,
+    "health": draw_health,
     "note": draw_note,
     "note-light": draw_note,
     "clock": draw_clock,

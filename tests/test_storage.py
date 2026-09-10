@@ -161,7 +161,7 @@ def test_migration_ignores_file_with_broken_utf8(tmp_path):
 def test_schema_version_recorded(tmp_path):
     store = Storage(tmp_path / "data.db")
 
-    assert store.get_meta("schema_version") == "1"
+    assert store.get_meta("schema_version") == "2"
     store.close()
 
 
@@ -345,7 +345,7 @@ def test_counter_counts_written_notes_not_attempts(tmp_path):
 def test_refuses_database_from_a_newer_version(tmp_path):
     db = tmp_path / "data.db"
     first = Storage(db)
-    first.set_meta("schema_version", "2")
+    first.set_meta("schema_version", "3")
     first.close()
 
     with pytest.raises(StorageError, match="более новой версией"):
@@ -419,5 +419,114 @@ def test_sync_notes_to_diary_migrates_single_notes(tmp_path):
         # идемпотентность
         assert storage.sync_notes_to_diary() == 0
         assert len(storage.diary_entries_on("2026-09-07")) == 1
+    finally:
+        storage.close()
+
+
+# -- биодневник (измерения) -------------------------------------------
+
+def test_measurement_roundtrip(tmp_path):
+    storage = Storage(tmp_path / "data.db")
+    try:
+        mid = storage.add_measurement("weight", 72.5, "утром")
+        rows = storage.measurements_of_kind("weight")
+        assert len(rows) == 1
+        assert rows[0]["id"] == mid
+        assert rows[0]["value"] == 72.5
+        assert rows[0]["note"] == "утром"
+
+        assert storage.delete_measurement(mid)
+        assert storage.measurements_of_kind("weight") == []
+        assert not storage.delete_measurement(mid)
+    finally:
+        storage.close()
+
+
+def test_measurements_sorted_newest_first(tmp_path):
+    storage = Storage(tmp_path / "data.db")
+    try:
+        storage.add_measurement("pulse", 60, day="2026-09-01")
+        storage.add_measurement("pulse", 62, day="2026-09-02")
+        values = [r["value"] for r in storage.measurements_of_kind("pulse")]
+        assert values == [62, 60]
+    finally:
+        storage.close()
+
+
+def test_schema_v1_database_is_migrated_to_v2(tmp_path):
+    db = tmp_path / "data.db"
+    old = Storage(db)
+    old.set_meta("schema_version", "1")
+    old.close()
+
+    reopened = Storage(db)
+    assert reopened.get_meta("schema_version") == "2"
+    # Таблица измерений появилась — можно писать.
+    assert reopened.add_measurement("weight", 70.0) > 0
+    reopened.close()
+
+
+# -- профиль календаря ------------------------------------------------
+
+def test_profile_roundtrip(tmp_path):
+    from longevity.plan import Profile
+
+    storage = Storage(tmp_path / "data.db")
+    try:
+        storage.save_profile(Profile(age=47, sex="м", activity=2, deload=True))
+        storage.save_hidden(frozenset(["sauna", "mind_fish"]))
+
+        profile = storage.load_profile()
+        assert profile.age == 47
+        assert profile.sex == "м"
+        assert profile.activity == 2
+        assert profile.deload is True
+        assert profile.hidden == frozenset(["sauna", "mind_fish"])
+    finally:
+        storage.close()
+
+
+def test_profile_defaults_when_unset(tmp_path):
+    from longevity.plan import Profile
+
+    storage = Storage(tmp_path / "data.db")
+    try:
+        profile = storage.load_profile()
+        assert profile == Profile()
+        assert profile.hidden == frozenset()
+    finally:
+        storage.close()
+
+
+def test_custom_items_roundtrip(tmp_path):
+    from longevity.content import ScheduleItem
+    from longevity.plan import new_custom_id
+
+    storage = Storage(tmp_path / "data.db")
+    try:
+        items = [ScheduleItem(
+            id=new_custom_id(), title="Дневник сна", detail="8 часов",
+            cat="Питание", days=(0,), anchor="clock", time="08:00",
+            tips=(), requires={}, alt=None,
+        )]
+        storage.save_custom_items(items)
+        loaded = storage.load_custom_items(["Питание"])
+        assert [it.title for it in loaded] == ["Дневник сна"]
+    finally:
+        storage.close()
+
+
+def test_screening_dates_roundtrip(tmp_path):
+    import datetime as dt
+
+    storage = Storage(tmp_path / "data.db")
+    try:
+        assert storage.screening_last_done("bp") is None
+
+        storage.mark_screening("bp", dt.date(2026, 9, 1))
+        assert storage.screening_last_done("bp") == dt.date(2026, 9, 1)
+
+        storage.clear_screening("bp")
+        assert storage.screening_last_done("bp") is None
     finally:
         storage.close()
