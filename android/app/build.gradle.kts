@@ -11,8 +11,8 @@ android {
         applicationId = "com.revaks.longevity"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.3.3"
+        versionCode = 11
+        versionName = "0.4.0"
 
         // Данные приложения (советы, расписание, MIND, книги) лежат в assets
         // и в сборку не перекомпилируются.

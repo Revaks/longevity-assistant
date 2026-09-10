@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.revaks.longevity.LongevityApp
 import com.revaks.longevity.core.Content
 import com.revaks.longevity.core.Dates
+import com.revaks.longevity.core.Plan
 import com.revaks.longevity.core.Schedule
 import com.revaks.longevity.core.ScheduleItem
 import com.revaks.longevity.data.Storage
@@ -74,10 +75,19 @@ class ActivityFragment : Fragment() {
 
         binding.tvDateLabel.text = Dates.fmtDayFull(selectedDay)
         val date = Dates.iso(selectedDay)
-        val items = Schedule.getDayPlan(ready.content, selectedDay)
+        val items = dayItems(ready.content, storage, selectedDay)
         adapter?.submit(date, items, storage.completionsOn(date))
         updateStats()
     }
+
+    /** Пункты дня с учётом профиля: скрытые, свои пункты и ротация. */
+    private fun dayItems(content: Content, storage: Storage, day: LocalDate): List<ScheduleItem> =
+        Plan.itemsForDay(
+            content,
+            storage.loadProfile(),
+            storage.loadCustomItems(content.categories),
+            day,
+        )
 
     /** Прогресс дня и сводка по неделе — без пересоздания списка. */
     private fun updateStats() {
@@ -86,8 +96,9 @@ class ActivityFragment : Fragment() {
         val storage = app.storage()
         val date = Dates.iso(selectedDay)
 
-        val items = Schedule.getDayPlan(ready.content, selectedDay)
-        val doneCount = storage.completionsOn(date).size
+        val items = dayItems(ready.content, storage, selectedDay)
+        val completed = storage.completionsOn(date)
+        val doneCount = items.count { it.id in completed }
         val total = items.size
         if (total == 0) {
             binding.tvProgress.text = "На этот день расписания нет"
@@ -101,9 +112,13 @@ class ActivityFragment : Fragment() {
         val parts = ArrayList<String>(7)
         for (i in 0 until 7) {
             val d = monday.plusDays(i.toLong())
-            val dTotal = Schedule.getDayPlan(ready.content, d).size
-            val dDone = storage.completionsOn(Dates.iso(d)).size
-            parts.add("${Dates.WEEKDAYS[i]} %02d: %d/%d".format(d.dayOfMonth, dDone, dTotal))
+            val dItems = dayItems(ready.content, storage, d)
+            val dDone = storage.completionsOn(Dates.iso(d))
+            parts.add(
+                "${Dates.WEEKDAYS[i]} %02d: %d/%d".format(
+                    d.dayOfMonth, dItems.count { it.id in dDone }, dItems.size,
+                )
+            )
         }
         binding.tvWeek.text = "Неделя: ${parts.joinToString("   ")}"
     }

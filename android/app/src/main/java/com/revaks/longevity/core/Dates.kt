@@ -32,4 +32,15 @@ object Dates {
 
     /** ISO-строка даты: как date.isoformat() в Python. */
     fun iso(day: java.time.LocalDate): String = day.toString()
+
+    /** «08.09.26» — короткая подпись даты для списков. */
+    fun fmtShort(day: java.time.LocalDate): String =
+        "%02d.%02d.%02d".format(day.dayOfMonth, day.monthValue, day.year % 100)
+
+    /** То же для ISO-строки; неразобранная строка возвращается как есть. */
+    fun fmtShort(iso: String): String = try {
+        fmtShort(java.time.LocalDate.parse(iso))
+    } catch (e: Exception) {
+        iso
+    }
 }

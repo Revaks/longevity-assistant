@@ -95,6 +95,7 @@ class LongevityApp : Application() {
                 mind = read("mind.json"),
                 meta = read("meta.json"),
                 books = read("books.json"),
+                extras = read("extras.json"),
             )
         )
     }

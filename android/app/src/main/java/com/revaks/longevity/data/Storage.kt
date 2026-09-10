@@ -4,6 +4,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.revaks.longevity.core.Dates
+import com.revaks.longevity.core.Plan
+import com.revaks.longevity.core.Profile
+import com.revaks.longevity.core.ScheduleItem
 import org.json.JSONObject
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -15,6 +19,16 @@ data class DiaryEntry(
     val date: String,
     val created: String,
     val text: String,
+)
+
+/** Измерение биодневника (вес, давление, пульс и т. д.). */
+data class Measurement(
+    val id: Long,
+    val date: String,
+    val kind: String,
+    val value: Double,
+    val note: String,
+    val created: String,
 )
 
 class StorageError(message: String) : Exception(message)
@@ -54,11 +68,43 @@ class Storage(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VE
                 "key TEXT PRIMARY KEY, " +
                 "value TEXT NOT NULL)"
         )
+        createMeasurements(db)
         insertMeta(db, SCHEMA_VERSION_KEY, SCHEMA_VERSION)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Версия 1 — первая; будущие миграции добавляются здесь.
+        // Версия 2: биодневник (измерения).
+        if (oldVersion < 2) {
+            createMeasurements(db)
+            putMeta(db, SCHEMA_VERSION_KEY, SCHEMA_VERSION)
+        }
+    }
+
+    private fun putMeta(db: SQLiteDatabase, key: String, value: String) {
+        db.insertWithOnConflict(
+            "meta", null,
+            ContentValues().apply {
+                put("key", key)
+                put("value", value)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    private fun createMeasurements(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS measurements (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "date TEXT NOT NULL, " +
+                "kind TEXT NOT NULL, " +
+                "value REAL NOT NULL, " +
+                "note TEXT NOT NULL DEFAULT '', " +
+                "created TEXT NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_measurements_kind " +
+                "ON measurements(kind, date)"
+        )
     }
 
     override fun onOpen(db: SQLiteDatabase) {
@@ -196,6 +242,101 @@ class Storage(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VE
         return result
     }
 
+    // ------------------------------------------------------------------ биодневник
+
+    private fun rowToMeasurement(cursor: android.database.Cursor): Measurement = Measurement(
+        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+        date = cursor.getString(cursor.getColumnIndexOrThrow("date")),
+        kind = cursor.getString(cursor.getColumnIndexOrThrow("kind")),
+        value = cursor.getDouble(cursor.getColumnIndexOrThrow("value")),
+        note = cursor.getString(cursor.getColumnIndexOrThrow("note")),
+        created = cursor.getString(cursor.getColumnIndexOrThrow("created")),
+    )
+
+    /** Добавить измерение; дата по умолчанию — сегодня. Возвращает id. */
+    fun addMeasurement(
+        kind: String,
+        value: Double,
+        note: String = "",
+        date: String = com.revaks.longevity.core.Dates.iso(java.time.LocalDate.now()),
+    ): Long {
+        val values = ContentValues().apply {
+            put("date", date)
+            put("kind", kind)
+            put("value", value)
+            put("note", note.trim())
+            put("created", nowUtc())
+        }
+        return writableDatabase.insert("measurements", null, values)
+    }
+
+    /** Последние измерения вида (сначала свежие). */
+    fun measurementsOfKind(kind: String, limit: Int = 30): List<Measurement> =
+        writableDatabase.query(
+            "measurements", null, "kind = ?", arrayOf(kind),
+            null, null, "date DESC, id DESC", limit.toString()
+        ).use { c -> buildList { while (c.moveToNext()) add(rowToMeasurement(c)) } }
+
+    /** Измерения вида за период, по возрастанию даты. */
+    fun measurementsInRange(kind: String, start: String, end: String): List<Measurement> =
+        writableDatabase.query(
+            "measurements", null, "kind = ? AND date BETWEEN ? AND ?",
+            arrayOf(kind, start, end), null, null, "date, id"
+        ).use { c -> buildList { while (c.moveToNext()) add(rowToMeasurement(c)) } }
+
+    /** Все измерения (для выгрузки/удаления), свежие первыми. */
+    fun allMeasurements(limit: Int = 500): List<Measurement> =
+        writableDatabase.query(
+            "measurements", null, null, null, null, null, "date DESC, id DESC", limit.toString()
+        ).use { c -> buildList { while (c.moveToNext()) add(rowToMeasurement(c)) } }
+
+    fun deleteMeasurement(id: Long): Boolean =
+        writableDatabase.delete("measurements", "id = ?", arrayOf(id.toString())) > 0
+
+    // ------------------------------------------------------------------ профиль
+
+    /** Профиль календаря (возраст, пол, активность, разгрузка, скрытые пункты). */
+    fun loadProfile(): Profile = Profile(
+        age = (getValue("user.age") as? Number)?.toInt(),
+        sex = getValue("user.sex") as? String,
+        activity = (getValue("user.activity") as? Number)?.toInt() ?: 1,
+        deload = getValue("user.deload") as? Boolean ?: false,
+        hidden = Plan.parseHidden(getValue("user.hidden") as? String),
+    )
+
+    /** Сохранить профиль (скрытые пункты пишутся отдельно). */
+    fun saveProfile(profile: Profile) {
+        setValue("user.age", profile.age)
+        setValue("user.sex", profile.sex)
+        setValue("user.activity", profile.activity)
+        setValue("user.deload", profile.deload)
+    }
+
+    fun loadCustomItems(categories: List<String>): List<ScheduleItem> =
+        Plan.parseCustomItems(getValue("user.custom") as? String, categories)
+
+    fun saveCustomItems(items: List<ScheduleItem>) {
+        setValue("user.custom", Plan.serializeCustomItems(items))
+    }
+
+    fun saveHidden(ids: Set<String>) {
+        setValue("user.hidden", Plan.serializeHidden(ids))
+    }
+
+    /** Дата последнего прохождения обследования (null — не проходили). */
+    fun screeningLastDone(id: String): java.time.LocalDate? =
+        (getValue("user.screen.$id") as? String)?.let { raw ->
+            runCatching { java.time.LocalDate.parse(raw) }.getOrNull()
+        }
+
+    fun markScreening(id: String, date: java.time.LocalDate) {
+        setValue("user.screen.$id", Dates.iso(date))
+    }
+
+    fun clearScreening(id: String) {
+        setValue("user.screen.$id", null)
+    }
+
     // ------------------------------------------------------------------ настройки
 
     /** Значение настройки любого JSON-типа; испорченное значение — как отсутствующее. */
@@ -274,8 +415,8 @@ class Storage(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VE
 
     companion object {
         private const val DB_NAME = "data.db"
-        private const val DB_VERSION = 1
-        private const val SCHEMA_VERSION = "1"
+        private const val DB_VERSION = 2
+        private const val SCHEMA_VERSION = "2"
         private const val SCHEMA_VERSION_KEY = "schema_version"
 
         /** Префикс для ключей настроек приложения. */

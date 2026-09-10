@@ -6,18 +6,32 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.revaks.longevity.LongevityApp
 import com.revaks.longevity.R
+import com.revaks.longevity.core.Content
 import com.revaks.longevity.core.Dates
+import com.revaks.longevity.core.Habits
+import com.revaks.longevity.core.Measures
+import com.revaks.longevity.core.Plan
+import com.revaks.longevity.core.Profile
 import com.revaks.longevity.core.Schedule
+import com.revaks.longevity.core.ScheduleItem
+import com.revaks.longevity.core.Screenings
+import com.revaks.longevity.data.Storage
 import com.revaks.longevity.databinding.FragmentCalendarBinding
 import com.revaks.longevity.ui.Ui
 import java.time.LocalDate
 
-/** Вкладка «Календарь»: неделя, отметки о заметках, план выбранного дня. */
+/**
+ * Вкладка «Календарь»: неделя, план дня, прогресс привычек, фокус недели,
+ * биодневник и обследования. Профиль, свои пункты и скрытие пунктов —
+ * в «Настройках» календаря.
+ */
 class CalendarFragment : Fragment() {
 
     private var _binding: FragmentCalendarBinding? = null
@@ -56,15 +70,57 @@ class CalendarFragment : Fragment() {
             selectedDay = LocalDate.now()
             refresh()
         }
+        binding.btnSettings.setOnClickListener {
+            CalendarDialogs.showActions(this, ::openProfile, ::openItems, ::openMeasure)
+        }
         refresh()
     }
 
-    private fun content() = (app.state as LongevityApp.State.Ready).content
-    private fun storage() = app.storage()
+    private fun content(): Content = (app.state as LongevityApp.State.Ready).content
+    private fun storage(): Storage = app.storage()
+
+    // ------------------------------------------------------------------ профиль
+
+    private fun openProfile() {
+        CalendarDialogs.showProfile(this, storage().loadProfile()) { profile ->
+            storage().saveProfile(profile)
+            refresh()
+        }
+    }
+
+    private fun openItems() {
+        val content = content()
+        val storage = storage()
+        CalendarDialogs.showItems(
+            this, content, storage.loadCustomItems(content.categories),
+            storage.loadProfile().hidden,
+        ) { items, hidden ->
+            storage.saveCustomItems(items)
+            storage.saveHidden(hidden)
+            refresh()
+        }
+    }
+
+    private fun openMeasure() {
+        CalendarDialogs.showMeasure(this) { values ->
+            val s = storage()
+            for ((kind, value) in values) {
+                s.addMeasurement(kind = kind, value = value)
+            }
+            refresh()
+        }
+    }
+
+    // ------------------------------------------------------------------ отрисовка
 
     private fun refresh() {
         if (_binding == null) return
         val content = content()
+        val storage = storage()
+        val profile = storage.loadProfile()
+        val custom = storage.loadCustomItems(content.categories)
+        val ctx = requireContext()
+        val today = LocalDate.now()
 
         val sunday = weekStart.plusDays(6)
         binding.tvWeekLabel.text = String.format(
@@ -74,8 +130,63 @@ class CalendarFragment : Fragment() {
         )
 
         buildLegend(content.categories.map { it to content.catColor(it) })
-        buildDayChips()
-        buildDayDetail()
+        buildDayChips(storage)
+
+        // План каждого дня недели считается один раз за отрисовку.
+        val planCache = HashMap<String, Set<String>>()
+        fun idsFor(day: LocalDate): Set<String> =
+            planCache.getOrPut(Dates.iso(day)) {
+                Plan.itemIdsForDay(content, profile, custom, day)
+            }
+        fun doneFor(day: LocalDate): Set<String> = storage.completionsOn(Dates.iso(day))
+
+        val (done, total) = Habits.weekProgress(weekStart, today, ::idsFor, ::doneFor)
+        val ratios = Habits.dailyRatios(weekStart, today, ::idsFor, ::doneFor)
+        val weak = weakSpots(content, profile, custom, storage, today)
+        binding.llProgress.removeAllViews()
+        CalendarCards.renderProgress(
+            ctx, binding.llProgress, done, total, ratios, Dates.WEEKDAYS, weak,
+        )
+
+        binding.llFocus.removeAllViews()
+        val focus = Plan.focusForWeek(content, weekStart)
+        CalendarCards.renderFocus(
+            ctx, binding.llFocus, focus, Plan.focusTaskIds(focus),
+            doneFor(selectedDay),
+        ) { taskId ->
+            storage.toggleCompletion(Dates.iso(selectedDay), taskId)
+            refresh()
+        }
+
+        buildDayDetail(content, profile, custom, storage, ::idsFor, ::doneFor)
+
+        binding.llBio.removeAllViews()
+        val measurements = Measures.KINDS.associate { it.id to storage.measurementsOfKind(it.id) }
+        CalendarCards.renderBio(
+            ctx, binding.llBio, measurements,
+            onAdd = ::openMeasure,
+            onDelete = { measurement ->
+                storage.deleteMeasurement(measurement.id)
+                refresh()
+            },
+        )
+
+        binding.llScreens.removeAllViews()
+        val entries = Screenings.forProfile(content, profile, today) { id ->
+            storage.screeningLastDone(id)
+        }
+        CalendarCards.renderScreenings(
+            ctx, binding.llScreens, entries,
+            onMark = { screening ->
+                storage.markScreening(screening.id, today)
+                refresh()
+            },
+            onClear = { screening ->
+                storage.clearScreening(screening.id)
+                refresh()
+            },
+            disclaimer = "Список ориентировочный — периодичность и необходимость определяет врач.",
+        )
     }
 
     private fun buildLegend(colored: List<Pair<String, Int>>) {
@@ -93,7 +204,7 @@ class CalendarFragment : Fragment() {
         }
     }
 
-    private fun buildDayChips() {
+    private fun buildDayChips(storage: Storage) {
         binding.dayRow.removeAllViews()
         val ctx = requireContext()
         val today = LocalDate.now()
@@ -123,7 +234,7 @@ class CalendarFragment : Fragment() {
             }
             chip.addView(title)
             chip.addView(number)
-            if (storage().hasDiaryNotes(Dates.iso(day))) {
+            if (storage.hasDiaryNotes(Dates.iso(day))) {
                 val dot = TextView(ctx).apply {
                     text = "•"
                     textSize = 10f
@@ -158,14 +269,18 @@ class CalendarFragment : Fragment() {
         return drawable
     }
 
-    private fun buildDayDetail() {
-        val content = content()
+    private fun buildDayDetail(
+        content: Content,
+        profile: Profile,
+        custom: List<ScheduleItem>,
+        storage: Storage,
+        idsFor: (LocalDate) -> Set<String>,
+        doneFor: (LocalDate) -> Set<String>,
+    ) {
         val container = binding.llDay
         container.removeAllViews()
         val ctx = requireContext()
-        val storage = storage()
 
-        // Заголовок выбранного дня
         val head = TextView(ctx).apply {
             text = Dates.fmtDayFull(selectedDay)
             setTextColor(0xFF111827.toInt())
@@ -175,36 +290,20 @@ class CalendarFragment : Fragment() {
         container.addView(head, marginBottom(6))
 
         val date = Dates.iso(selectedDay)
-        val items = Schedule.getDayPlan(content, selectedDay)
+        val items = Plan.itemsForDay(content, profile, custom, selectedDay)
+        val done = doneFor(selectedDay)
 
         if (items.isEmpty()) {
             container.addView(
-                mutedLabel(ctx, "В этот день пунктов расписания нет."), marginBottom(6)
+                mutedLabel(ctx, "В этот день пунктов нет. Добавить свои можно в «Настройках»."),
+                marginBottom(6),
             )
         } else {
+            val streaks = Habits.streaks(
+                items.map { it.id }, selectedDay, idsFor, doneFor,
+            )
             for (item in items) {
-                val time = TextView(ctx).apply {
-                    text = Schedule.displayTime(item)
-                    setTextColor(content.catColor(item.cat))
-                    textSize = 13f
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                }
-                val title = TextView(ctx).apply {
-                    text = item.title
-                    setTextColor(0xFF111827.toInt())
-                    textSize = 15f
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                }
-                val block = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 2))
-                }
-                block.addView(time)
-                block.addView(title)
-                if (item.detail.isNotEmpty()) {
-                    block.addView(mutedLabel(ctx, item.detail))
-                }
-                container.addView(block, marginBottom(4))
+                container.addView(dayItemRow(ctx, content, item, date, done, streaks[item.id] ?: 0))
             }
         }
 
@@ -231,6 +330,92 @@ class CalendarFragment : Fragment() {
                 container.addView(note, marginBottom(6))
             }
         }
+    }
+
+    /** Строка пункта дня: чекбокс, время, название, деталь и серия. */
+    private fun dayItemRow(
+        ctx: android.content.Context,
+        content: Content,
+        item: ScheduleItem,
+        date: String,
+        done: Set<String>,
+        streak: Int,
+    ): View {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.TOP
+            setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 4))
+        }
+        val check = CheckBox(ctx).apply {
+            isChecked = item.id in done
+            setOnCheckedChangeListener { _, _ ->
+                storage().toggleCompletion(date, item.id)
+                refresh()
+            }
+        }
+        row.addView(check)
+
+        val column = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        column.addView(
+            TextView(ctx).apply {
+                text = Schedule.displayTime(item)
+                setTextColor(content.catColor(item.cat))
+                textSize = 12f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+        )
+        val titleRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        titleRow.addView(
+            TextView(ctx).apply {
+                text = item.title
+                setTextColor(0xFF111827.toInt())
+                textSize = 15f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+        )
+        if (streak > 0) {
+            titleRow.addView(
+                TextView(ctx).apply {
+                    text = "  • серия $streak"
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(ctx, R.color.primary))
+                }
+            )
+        }
+        column.addView(titleRow)
+        if (item.detail.isNotEmpty()) {
+            column.addView(mutedLabel(ctx, item.detail))
+        }
+        row.addView(column)
+        return row
+    }
+
+    /** Пункты, которые чаще всего пропускаются за последние 30 дней. */
+    private fun weakSpots(
+        content: Content,
+        profile: Profile,
+        custom: List<ScheduleItem>,
+        storage: Storage,
+        today: LocalDate,
+    ): List<Pair<String, Int>> {
+        val planned = HashMap<String, Int>()
+        val done = HashMap<String, Int>()
+        val titles = HashMap<String, String>()
+        for (offset in 0 until 30) {
+            val day = today.minusDays(offset.toLong())
+            val doneToday = storage.completionsOn(Dates.iso(day))
+            for (item in Plan.itemsForDay(content, profile, custom, day)) {
+                planned[item.id] = (planned[item.id] ?: 0) + 1
+                titles[item.id] = item.title
+                if (item.id in doneToday) done[item.id] = (done[item.id] ?: 0) + 1
+            }
+        }
+        return Habits.weakSpots(planned, done, limit = 3, minPlanned = 3)
+            .filter { it.second < 0.999 }
+            .map { (id, ratio) -> (titles[id] ?: id) to (ratio * 100).toInt() }
     }
 
     private fun mutedLabel(ctx: android.content.Context, text: String): TextView =

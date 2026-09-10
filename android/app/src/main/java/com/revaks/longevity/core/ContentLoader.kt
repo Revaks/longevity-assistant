@@ -17,6 +17,8 @@ data class JsonFiles(
     val mind: String,
     val meta: String,
     val books: String,
+    /** extras.json: ротация пунктов, фокусы недель, обследования (необязателен). */
+    val extras: String = "",
 )
 
 /**
@@ -57,6 +59,8 @@ object ContentLoader {
         val limitRows = list(field(mindObj, "limit", "list", "mind.json"), "mind.json, limit")
         val menuRows = list(field(mindObj, "menu", "list", "mind.json"), "mind.json, menu")
 
+        val (rotations, focus, screenings) = buildExtras(files.extras, schedule.map { it.id }.toSet())
+
         return Content(
             tips = tips,
             schedule = schedule,
@@ -72,6 +76,9 @@ object ContentLoader {
             quickQuestions = strList(field(metaObj, "quick_questions", "list", "meta.json"), "meta.json"),
             books = books,
             passages = passages,
+            rotations = rotations,
+            focus = focus,
+            screenings = screenings,
         )
     }
 
@@ -270,6 +277,78 @@ object ContentLoader {
             passages.add(passage)
         }
         return Pair(books, passages)
+    }
+
+    /** Разбор extras.json: ротация пунктов, фокусы недель, обследования. */
+    private fun buildExtras(
+        text: String,
+        scheduleIds: Set<String>,
+    ): Triple<Map<String, List<RotationVariant>>, List<FocusWeek>, List<Screening>> {
+        if (text.isBlank()) return Triple(emptyMap(), emptyList(), emptyList())
+        val root = obj(text, "extras.json")
+
+        val rotations = LinkedHashMap<String, List<RotationVariant>>()
+        for ((i, row) in list(field(root, "rotations", "list", "extras.json"), "extras.json, rotations")
+            .withIndex()) {
+            val w = where(row, i, "ротация")
+            val itemId = str(field(row, "item_id", "str", w), "item_id", w)
+            if (itemId !in scheduleIds) {
+                throw ContentError("$w: ссылка на несуществующий пункт расписания '$itemId'")
+            }
+            val variants = list(field(row, "variants", "list", w), w).mapIndexed { vi, v ->
+                val vw = "$w, вариант №${vi + 1}"
+                val level = (field(v, "level", "int?", vw) as? Number)?.toInt() ?: 0
+                if (level !in 0..2) throw ContentError("$vw: level должен быть 0..2")
+                RotationVariant(
+                    level = level,
+                    title = str(field(v, "title", "str", vw), "title", vw),
+                    detail = str(field(v, "detail", "str", vw), "detail", vw),
+                )
+            }
+            if (variants.isEmpty()) throw ContentError("$w: нет ни одного варианта")
+            rotations[itemId] = variants
+        }
+
+        val focus = list(field(root, "focus", "list", "extras.json"), "extras.json, focus")
+            .mapIndexed { i, row ->
+                val w = where(row, i, "фокус недели")
+                val tasks = list(field(row, "tasks", "list", w), w).mapIndexed { ti, v ->
+                    if (v !is String) throw ContentError("$w: задание №${ti + 1} должно быть строкой")
+                    v
+                }
+                if (tasks.isEmpty()) throw ContentError("$w: нет заданий")
+                FocusWeek(
+                    id = str(field(row, "id", "str", w), "id", w),
+                    title = str(field(row, "title", "str", w), "title", w),
+                    detail = str(field(row, "detail", "str", w), "detail", w),
+                    tasks = tasks,
+                )
+            }
+        val seenFocus = HashSet<String>()
+        for (f in focus) {
+            if (!seenFocus.add(f.id)) throw ContentError("extras.json: дублирующийся id фокуса: ${f.id}")
+        }
+
+        val screenings = list(field(root, "screenings", "list", "extras.json"), "extras.json, screenings")
+            .mapIndexed { i, row ->
+                val w = where(row, i, "обследование")
+                val sex = (field(row, "sex", "str?", w) as? String)
+                if (sex != null && sex != "м" && sex != "ж") {
+                    throw ContentError("$w: пол должен быть 'м', 'ж' или отсутствовать")
+                }
+                val period = (field(row, "period_months", "int?", w) as? Number)?.toInt() ?: 12
+                if (period <= 0) throw ContentError("$w: period_months должен быть больше нуля")
+                val ageMin = (field(row, "age_min", "int?", w) as? Number)?.toInt() ?: 18
+                Screening(
+                    id = str(field(row, "id", "str", w), "id", w),
+                    title = str(field(row, "title", "str", w), "title", w),
+                    detail = str(field(row, "detail", "str", w), "detail", w),
+                    periodMonths = period,
+                    ageMin = ageMin,
+                    sex = sex,
+                )
+            }
+        return Triple(rotations, focus, screenings)
     }
 
     private fun checkTips(tips: List<Tip>, categories: List<String>) {

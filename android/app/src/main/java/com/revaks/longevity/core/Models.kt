@@ -60,6 +60,34 @@ data class MenuDay(
     val snack: String,
 )
 
+/**
+ * Вариант пункта расписания для ротации по неделям.
+ * [level] — минимальный уровень активности (0 — низкий, 1 — средний, 2 — высокий).
+ */
+data class RotationVariant(
+    val level: Int,
+    val title: String,
+    val detail: String,
+)
+
+/** Тема недели («фокус») с тремя заданиями. */
+data class FocusWeek(
+    val id: String,
+    val title: String,
+    val detail: String,
+    val tasks: List<String>,
+)
+
+/** Профилактическое обследование с ориентировочной периодичностью. */
+data class Screening(
+    val id: String,
+    val title: String,
+    val detail: String,
+    val periodMonths: Int,
+    val ageMin: Int,
+    val sex: String?,
+)
+
 class Content(
     val tips: List<Tip>,
     val schedule: List<ScheduleItem>,
@@ -75,6 +103,9 @@ class Content(
     val quickQuestions: List<String>,
     val books: List<Book> = emptyList(),
     val passages: List<Passage> = emptyList(),
+    val rotations: Map<String, List<RotationVariant>> = emptyMap(),
+    val focus: List<FocusWeek> = emptyList(),
+    val screenings: List<Screening> = emptyList(),
 ) {
     fun tip(id: String): Tip = tips.firstOrNull { it.id == id } ?: throw NoSuchElementException(id)
     fun book(id: String): Book = books.firstOrNull { it.id == id } ?: throw NoSuchElementException(id)

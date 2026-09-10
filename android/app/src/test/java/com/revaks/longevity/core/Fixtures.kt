@@ -102,6 +102,9 @@ object Fixtures {
         scheduleJson: String = scheduleJson(scheduleItem()),
         synonymsJson: String = synonymsJson("рыба" to "рыба омега"),
         booksJson: String = booksJson(),
+        // По умолчанию ротация пустая: фикстуры со своим расписанием не должны
+        // зависеть от ссылок на пункты «настоящих» данных.
+        extras: String = extrasJson(rotations = "[]"),
     ): Content = ContentLoader.buildContent(
         JsonFiles(
             tips = tipsJson,
@@ -110,6 +113,47 @@ object Fixtures {
             mind = mindJson(),
             meta = metaJson(),
             books = booksJson,
+            extras = extras,
         )
+    )
+
+    fun rotation(
+        itemId: String = "fish_day",
+        variants: String = rowsJson(
+            obj("level" to 0, "title" to "Вариант А", "detail" to "деталь А"),
+            obj("level" to 1, "title" to "Вариант Б", "detail" to "деталь Б"),
+        ),
+    ): String = obj("item_id" to itemId, "variants" to JSONArray(variants))
+
+    fun focusWeek(
+        id: String = "f1",
+        title: String = "Фокус недели",
+        detail: String = "Описание фокуса",
+        tasks: List<String> = listOf("задание 1", "задание 2", "задание 3"),
+    ): String = obj(
+        "id" to id, "title" to title, "detail" to detail,
+        "tasks" to JSONArray(tasks),
+    )
+
+    fun screening(
+        id: String = "s1",
+        title: String = "Обследование",
+        detail: String = "деталь",
+        periodMonths: Int = 12,
+        ageMin: Int = 40,
+        sex: Any? = null,
+    ): String = obj(
+        "id" to id, "title" to title, "detail" to detail,
+        "period_months" to periodMonths, "age_min" to ageMin, "sex" to sex,
+    )
+
+    fun extrasJson(
+        rotations: String = rowsJson(rotation()),
+        focus: String = rowsJson(focusWeek()),
+        screenings: String = rowsJson(screening()),
+    ): String = obj(
+        "rotations" to JSONArray(rotations),
+        "focus" to JSONArray(focus),
+        "screenings" to JSONArray(screenings),
     )
 }
