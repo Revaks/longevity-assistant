@@ -7,11 +7,11 @@ def load(name: str):
         return json.load(f)
 
 
-def test_tips_file_has_all_seventy_tips():
+def test_tips_file_has_eighty_two_tips():
     tips = load("tips.json")
 
-    assert len(tips) == 70
-    assert len({t["id"] for t in tips}) == 70, "id советов должны быть уникальны"
+    assert len(tips) == 82
+    assert len({t["id"] for t in tips}) == 82, "id советов должны быть уникальны"
 
 
 def test_every_tip_keeps_its_source():
@@ -51,9 +51,9 @@ def test_mind_groups_and_menu():
 def test_schedule_has_stable_ids():
     schedule = load("schedule.json")
 
-    assert len(schedule) == 22
+    assert len(schedule) == 24
     ids = [item["id"] for item in schedule]
-    assert len(set(ids)) == 22, "id пунктов расписания должны быть уникальны"
+    assert len(set(ids)) == 24, "id пунктов расписания должны быть уникальны"
     assert all(item_id.strip() for item_id in ids), "пустой id недопустим"
 
 
@@ -150,3 +150,29 @@ def test_rx_matches_the_wording_criterion():
     flagged = {t["id"] for t in load("tips.json") if t["rx"]}
     assert matched == flagged, "список rx разошёлся с критерием из плана"
     assert "dob03" not in matched
+
+
+def test_new_book_tips_exist_with_book_sources():
+    """Советы из «Мозга долгожителя» (mz*) и «Кишечника долгожителя» (kg*)."""
+    tips = {t["id"]: t for t in load("tips.json")}
+
+    for tip_id in ("mz01", "mz03", "mz06", "kg02", "kg03", "kg05"):
+        assert tip_id in tips, f"нет совета {tip_id}"
+        source = tips[tip_id]["source"]
+        assert ("Мозг долгожителя" in source or
+                "Кишечник долгожителя" in source), f"{tip_id}: источник не из книг"
+        assert tips[tip_id]["rx"] is False
+
+
+def test_schedule_references_the_new_book_tips():
+    schedule = {s["id"]: s for s in load("schedule.json")}
+
+    brain = schedule["brain_training"]
+    assert "mz03" in brain["tips"] and brain["time"] == "17:00"
+
+    gut = schedule["gut_prebiotics"]
+    assert "kg02" in gut["tips"] and gut["anchor"] == "allday"
+
+    assert "mz01" in schedule["sleep_start"]["tips"]
+    assert "mz06" in schedule["train_walk"]["tips"]
+    assert "kg01" in schedule["meal_dinner"]["tips"]

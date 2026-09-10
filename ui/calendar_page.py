@@ -3,14 +3,14 @@
 
 import datetime as dt
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
-from longevity.schedule import display_time, get_today_plan
+from longevity.habits import streaks
+from longevity.plan import focus_for_week, focus_task_ids, item_ids_for_day, items_for_day
+from longevity.schedule import display_time
 
 from .app import WEEKDAYS_FULL, fmt_day
-
-#: Высота поля заметки в строках. Заметка на день многострочная по спеке.
-NOTE_HEIGHT = 3
+from . import calendar_dialogs
 
 
 class CalendarPage(ttk.Frame):
@@ -28,11 +28,20 @@ class CalendarPage(ttk.Frame):
         self.storage = self.app.storage
         self.week_start = self._monday(dt.date.today())
         self.selected_day = dt.date.today()
+        self._focus_vars = []
         self._build()
+        self.refresh()
 
     @staticmethod
     def _monday(d: dt.date) -> dt.date:
         return d - dt.timedelta(days=d.weekday())
+
+    # -- данные ---------------------------------------------------------
+    def _profile(self):
+        return self.storage.load_profile()
+
+    def _custom_items(self):
+        return self.storage.load_custom_items(self.app.content.categories)
 
     def _build(self):
         colors = self.theme.colors
@@ -53,11 +62,13 @@ class CalendarPage(ttk.Frame):
 
         legend = ttk.Frame(nav, style="Page.TFrame")
         legend.pack(side="right")
+        ttk.Button(legend, text="Настройки", command=self._open_settings).pack(
+            side="left", padx=(0, 10))
         for cat, color in self.app.content.cat_colors.items():
             tk.Label(legend, text="●", fg=color, bg=colors["bg"]).pack(side="left", padx=(8, 1))
             tk.Label(legend, text=cat, bg=colors["bg"], fg=colors["muted"]).pack(side="left")
 
-        # Сетка дней недели
+        # Заметки редактируются во вкладке «Заметки»; здесь — только индикатор.
         self.grid_frame = ttk.Frame(self, style="Page.TFrame")
         self.grid_frame.pack(fill="both", expand=True, padx=12)
 
@@ -69,7 +80,7 @@ class CalendarPage(ttk.Frame):
             header = tk.Label(col, text="", font=self.theme.font(10, "bold"),
                               pady=6, relief="groove", bd=1)
             header.pack(fill="x")
-            txt = tk.Text(col, height=24, wrap="word", cursor="hand2",
+            txt = tk.Text(col, height=16, wrap="word", cursor="hand2",
                           relief="groove", bd=1, padx=6, pady=6,
                           font=self.theme.font(9), state="disabled",
                           bg=colors["card"], fg=colors["text"])
@@ -79,30 +90,44 @@ class CalendarPage(ttk.Frame):
             self.day_widgets.append((header, txt, col))
         self.grid_frame.rowconfigure(0, weight=1)
 
-        # Нижняя панель с деталями выбранного дня
-        self.detail = tk.Text(self, height=8, wrap="word", relief="groove", bd=1,
-                              padx=10, pady=8, font=self.theme.font(10),
+        # Фокус недели — тема с заданиями, отметки пишутся в completions.
+        self.focus_frame = ttk.Frame(self, style="Page.TFrame")
+        self.focus_frame.pack(fill="x", padx=12, pady=(6, 0))
+
+        # Детали выбранного дня — внизу, компактно
+        self.detail = tk.Text(self, height=4, wrap="word", relief="groove", bd=1,
+                              padx=10, pady=6, font=self.theme.font(10),
                               bg=colors["card"], fg=colors["text"], state="disabled")
-        self.detail.pack(fill="x", padx=12, pady=(6, 6))
+        self.detail.pack(fill="x", padx=12, pady=(6, 10))
 
-        # Панель заметок на выбранный день
-        notes_bar = ttk.Frame(self, style="Page.TFrame")
-        notes_bar.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Label(notes_bar, text="Заметка на день:", bg=colors["bg"],
-                 fg=colors["text"]).pack(side="left", anchor="n")
-        # Поле многострочное: в заметку на день пишут список из нескольких
-        # пунктов, и однострочный Entry обрезал его в одну строку без
-        # возможности перенести. Три строки — то, что требует спека.
-        self.note_text = tk.Text(notes_bar, height=NOTE_HEIGHT, wrap="word",
-                                 relief="groove", bd=1, padx=6, pady=4,
-                                 font=self.theme.font(10),
-                                 bg=colors["card"], fg=colors["text"])
-        self.note_text.pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(notes_bar, text="Сохранить",
-                   command=self._save_note).pack(side="left", padx=2, anchor="n")
-        ttk.Button(notes_bar, text="Удалить",
-                   command=self._delete_note).pack(side="left", padx=2, anchor="n")
+    # -- настройки ------------------------------------------------------
+    def _open_settings(self):
+        calendar_dialogs.show_actions(
+            self, self._edit_profile, self._edit_items, self._add_measure)
 
+    def _edit_profile(self):
+        profile = calendar_dialogs.show_profile(self, self._profile())
+        if profile is not None:
+            self.storage.save_profile(profile)
+            self.refresh()
+
+    def _edit_items(self):
+        result = calendar_dialogs.show_items(
+            self, self.app.content, self._custom_items(), self._profile().hidden)
+        if result is not None:
+            custom, hidden = result
+            self.storage.save_custom_items(custom)
+            self.storage.save_hidden(hidden)
+            self.refresh()
+
+    def _add_measure(self):
+        values = calendar_dialogs.show_measure(self)
+        if values:
+            for kind, value in values:
+                self.storage.add_measurement(kind, value)
+
+    def on_show(self):
+        """Перерисовать план при показе — профиль мог измениться на другой вкладке."""
         self.refresh()
 
     # -- навигация -----------------------------------------------------
@@ -127,12 +152,15 @@ class CalendarPage(ttk.Frame):
     def refresh(self):
         colors = self.theme.colors
         today = dt.date.today()
+        content = self.app.content
+        profile = self._profile()
+        custom = self._custom_items()
         sunday = self.week_start + dt.timedelta(days=6)
         self.week_label.config(
             text=f"{self.week_start.day:02d}.{self.week_start.month:02d} – "
                  f"{sunday.day:02d}.{sunday.month:02d}.{sunday.year}")
 
-        week_notes = self.storage.notes_in_range(
+        week_notes = self.storage.diary_entries_in_range(
             self.week_start.isoformat(),
             (self.week_start + dt.timedelta(days=6)).isoformat(),
         )
@@ -140,15 +168,10 @@ class CalendarPage(ttk.Frame):
         for i, (header, txt, _col) in enumerate(self.day_widgets):
             day = self.week_start + dt.timedelta(days=i)
             key = day.isoformat()
-            note = week_notes.get(key)
+            notes = [e for e in week_notes if e["date"] == key]
             is_today = day == today
 
-            # Фон "сегодня" (colors["accent"]) темнее, чем фон обычного и
-            # выбранного дня — тёмная иконка заметки на нём проваливается в
-            # контраст ниже 3:1 (WCAG AA для графики), поэтому там отдельный
-            # светлый вариант. Проверено tests/test_icons.py::
-            # test_note_icon_contrast_meets_wcag_aa.
-            if note:
+            if notes:
                 icon_name = "note-light" if is_today else "note"
                 header.config(text=fmt_day(day), image=self.theme.icon(icon_name, 16),
                               compound="right")
@@ -163,75 +186,92 @@ class CalendarPage(ttk.Frame):
 
             txt.config(state="normal")
             txt.delete("1.0", "end")
-            items = get_today_plan(self.app.content, day)
+            items = items_for_day(content, profile, custom, day)
             for it in items:
-                color = self.app.content.cat_colors.get(it.cat, "#333333")
+                color = content.cat_colors.get(it.cat, "#333333")
                 tag = f"cat{i}_{it.cat.replace(' ', '')}"
                 txt.tag_configure(tag, foreground=color,
                                   font=self.theme.font(9, "bold"))
                 txt.insert("end", f"{display_time(it)}  ", "time")
                 txt.insert("end", it.title + "\n", tag)
-            if note:
-                txt.insert("end", "\n" + note + "\n", "note")
+            if notes:
                 txt.tag_configure("note", foreground="#92400e",
                                   font=self.theme.font(9, slant="italic"))
+                txt.insert("end", "\n")
+                for entry in notes:
+                    txt.insert("end", entry["text"] + "\n", "note")
             txt.tag_configure("time", foreground=colors["muted"], font=self.theme.font(9))
             txt.config(state="disabled")
 
+        self._render_focus()
         self._show_day_detail()
-        self._load_note_to_entry()
 
-    # -- заметки -------------------------------------------------------
-    def note_value(self) -> str:
-        """Текст заметки без служебного перевода строки, который добавляет Tk."""
-        return self.note_text.get("1.0", "end-1c")
+    def _render_focus(self):
+        colors = self.theme.colors
+        for child in self.focus_frame.winfo_children():
+            child.destroy()
+        self._focus_vars = []
 
-    def _set_note_value(self, text: str) -> None:
-        self.note_text.delete("1.0", "end")
-        if text:
-            self.note_text.insert("1.0", text)
-
-    def _load_note_to_entry(self):
-        key = self.selected_day.isoformat()
-        self._set_note_value(self.storage.get_note(key))
-
-    def _save_note(self):
-        key = self.selected_day.isoformat()
-        try:
-            self.storage.set_note(key, self.note_value())
-        except Exception as exc:
-            messagebox.showerror("Не удалось сохранить заметку", str(exc))
+        content = self.app.content
+        focus = focus_for_week(content, self.week_start)
+        if focus is None:
             return
-        self.refresh()
 
-    def _delete_note(self):
-        key = self.selected_day.isoformat()
-        try:
-            self.storage.set_note(key, "")
-        except Exception as exc:
-            messagebox.showerror("Не удалось удалить заметку", str(exc))
-            return
-        self._set_note_value("")
-        self.refresh()
+        head = ttk.Frame(self.focus_frame, style="Page.TFrame")
+        head.pack(fill="x")
+        tk.Label(head, text=focus.title, bg=colors["bg"], fg=colors["text"],
+                 font=self.theme.font(11, "bold")).pack(side="left")
+        tk.Label(head, text=focus.detail, bg=colors["bg"], fg=colors["muted"],
+                 font=self.theme.font(9), wraplength=700, justify="left").pack(
+            side="left", padx=10)
+
+        date = self.selected_day.isoformat()
+        done = self.storage.completions_on(date)
+        for index, task in enumerate(focus.tasks):
+            task_id = f"focus:{focus.id}:{index}"
+            var = tk.BooleanVar(value=task_id in done)
+            self._focus_vars.append((task_id, var))
+            ttk.Checkbutton(
+                self.focus_frame, text=task, variable=var,
+                command=lambda tid=task_id, v=var: self._toggle_focus(tid, v),
+            ).pack(anchor="w", padx=4)
+
+    def _toggle_focus(self, task_id, var):
+        self.storage.toggle_completion(self.selected_day.isoformat(), task_id)
+        var.set(task_id in self.storage.completions_on(self.selected_day.isoformat()))
 
     def _show_day_detail(self):
         colors = self.theme.colors
+        content = self.app.content
+        profile = self._profile()
+        custom = self._custom_items()
         self.detail.config(state="normal")
         self.detail.delete("1.0", "end")
         day = self.selected_day
-        items = get_today_plan(self.app.content, day)
+        items = items_for_day(content, profile, custom, day)
+
+        # Серии считаются по плановым id на день (не по скрытым/чужим).
+        done_for = lambda d: self.storage.completions_on(d.isoformat())
+        ids_for = lambda d: item_ids_for_day(content, profile, custom, d)
+        streak_map = streaks([it.id for it in items], day, ids_for, done_for)
+
         self.detail.insert("end", f"{WEEKDAYS_FULL[day.weekday()]}, "
                                   f"{day.day:02d}.{day.month:02d}.{day.year}\n", "h")
         self.detail.tag_configure("h", font=self.theme.font(11, "bold"))
         for it in items:
-            color = self.app.content.cat_colors.get(it.cat, "#333333")
+            color = content.cat_colors.get(it.cat, "#333333")
             tag = "d_" + it.cat.replace(" ", "")
             self.detail.tag_configure(tag, foreground=color,
                                       font=self.theme.font(10, "bold"))
             self.detail.insert("end", f"\n{display_time(it)} — {it.title} ", tag)
+            streak = streak_map.get(it.id, 0)
+            if streak:
+                self.detail.insert("end", f"(серия {streak}) ", "streak")
             self.detail.insert("end", f"({it.cat})\n", "cat")
             if it.detail:
                 self.detail.insert("end", it.detail + "\n", "det")
         self.detail.tag_configure("cat", foreground=colors["muted"])
         self.detail.tag_configure("det", foreground="#374151")
+        self.detail.tag_configure("streak", foreground=colors["accent"],
+                                  font=self.theme.font(10, slant="italic"))
         self.detail.config(state="disabled")

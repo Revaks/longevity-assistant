@@ -1,9 +1,9 @@
-"""Заметка на день: индикатор в шапке и само поле ввода.
+"""Календарь: индикатор заметок в шапке дня и показ записей дневника.
 
 Раньше отметка о заметке рисовалась эмодзи (" 📝" в тексте шапки) и была
-убрана вместе с прочими эмодзи интерфейса. Эта проверка следит, чтобы
-замена — иконка note размера 16 — действительно появлялась и исчезала
-вместе с заметкой, а не осталась только в интерфейсе визуально.
+убрана вместе с прочими эмодзи интерфейса. Эти проверки следят, чтобы
+замена — иконка note размера 16 — появлялась и исчезала вместе с заметками
+дневника (их может быть несколько на день), а записи попадали в колонку дня.
 """
 
 import datetime as dt
@@ -35,11 +35,11 @@ def test_note_icon_tracks_note_presence(tk, tmp_path):
 
         assert header.cget("image") == "", "без заметки иконки быть не должно"
 
-        storage.set_note(today.isoformat(), "проверка индикатора")
+        entry_id = storage.add_diary(today.isoformat(), "проверка индикатора")
         page.refresh()
-        assert header.cget("image") != "", "после сохранения заметки должна появиться иконка"
+        assert header.cget("image") != "", "после добавления заметки должна появиться иконка"
 
-        storage.set_note(today.isoformat(), "")
+        storage.delete_diary(entry_id)
         page.refresh()
         assert header.cget("image") == "", "после удаления заметки иконка должна исчезнуть"
     finally:
@@ -48,14 +48,12 @@ def test_note_icon_tracks_note_presence(tk, tmp_path):
 
 
 def test_today_header_uses_light_variant_other_days_use_dark(tk, tmp_path):
-    """Не просто "иконка есть", а именно тот вариант, который читаем на фоне.
+    """Не просто «иконка есть», а именно тот вариант, который читаем на фоне.
 
-    Фон "сегодня" темнее фона остальных дней (contrast_ratio проверяет это
+    Фон «сегодня» темнее фона остальных дней (contrast_ratio проверяет это
     числом в tests/test_icons.py) — здесь проверяется, что CalendarPage
     действительно выбирает под него "note-light", а не всегда один и тот же
-    файл. Без этой проверки регрессия ("note" и для сегодня тоже) прошла бы
-    незамеченной: индикатор остался бы виден в тесте (какая-то картинка
-    есть), просто с недостаточным контрастом.
+    файл.
     """
     from longevity.storage import Storage
 
@@ -71,8 +69,8 @@ def test_today_header_uses_light_variant_other_days_use_dark(tk, tmp_path):
             other_day += dt.timedelta(days=1)
         assert other_day != today and page.week_start <= other_day <= page.week_start + dt.timedelta(days=6)
 
-        storage.set_note(today.isoformat(), "заметка на сегодня")
-        storage.set_note(other_day.isoformat(), "заметка на другой день")
+        storage.add_diary(today.isoformat(), "заметка на сегодня")
+        storage.add_diary(other_day.isoformat(), "заметка на другой день")
         page.refresh()
 
         today_idx = (today - page.week_start).days
@@ -92,63 +90,8 @@ def test_today_header_uses_light_variant_other_days_use_dark(tk, tmp_path):
         root.destroy()
 
 
-# -- поле заметки: многострочное ------------------------------------------
-#
-# Спека требует поле в три строки; в отчёте фазы 1 это было ошибочно
-# объявлено сделанным, а на странице до сих пор стоял однострочный Entry —
-# перенос строки в него было просто не ввести.
-
-def test_note_field_is_a_three_line_text_widget(tk, tmp_path):
-    from longevity.storage import Storage
-
-    root = tk.Tk()
-    root.withdraw()
-    storage = Storage(tmp_path / "data.db")
-    try:
-        page = _build_page(root, storage)
-
-        assert page.note_text.winfo_class() == "Text", \
-            "поле заметки должно быть текстовым, а не однострочным Entry"
-        assert int(page.note_text.cget("height")) == 3
-    finally:
-        storage.close()
-        root.destroy()
-
-
-def test_multiline_note_is_saved_and_read_back(tk, tmp_path):
-    """Текст с переносами доходит до базы и возвращается из неё целиком."""
-    from longevity.storage import Storage
-
-    root = tk.Tk()
-    root.withdraw()
-    storage = Storage(tmp_path / "data.db")
-    note = "утро: витамин D\nднём: прогулка 40 минут\nвечером: без экрана"
-    try:
-        page = _build_page(root, storage)
-        page.goto_today()
-        today = dt.date.today().isoformat()
-
-        page.note_text.insert("1.0", note)
-        page._save_note()
-
-        assert storage.get_note(today) == note, \
-            f"в базу ушло не то, что ввели: {storage.get_note(today)!r}"
-        # refresh() внутри _save_note перечитал заметку из базы в поле —
-        # ровно этот же путь отрабатывает при переключении дня.
-        assert page.note_value() == note, "поле показывает не то, что в базе"
-        assert page.note_value().count("\n") == 2
-
-        page._delete_note()
-
-        assert storage.get_note(today) == ""
-        assert page.note_value() == ""
-    finally:
-        storage.close()
-        root.destroy()
-
-
-def test_note_field_follows_the_selected_day(tk, tmp_path):
-    """Переключение дня подставляет заметку этого дня, а не оставляет чужую."""
+def test_calendar_column_shows_all_diary_entries_of_day(tk, tmp_path):
+    """Несколько записей дня отображаются в колонке календаря."""
     from longevity.storage import Storage
 
     root = tk.Tk()
@@ -157,15 +100,17 @@ def test_note_field_follows_the_selected_day(tk, tmp_path):
     try:
         page = _build_page(root, storage)
         page.goto_today()
-        monday = page.week_start
-        storage.set_note(monday.isoformat(), "понедельник:\nсдать анализы")
-        storage.set_note((monday + dt.timedelta(days=1)).isoformat(), "вторник:\nбассейн")
+        today = dt.date.today()
+        date = today.isoformat()
+        storage.add_diary(date, "первая запись")
+        storage.add_diary(date, "вторая запись")
+        page.refresh()
 
-        page._on_col_click(0)
-        assert page.note_value() == "понедельник:\nсдать анализы"
-
-        page._on_col_click(1)
-        assert page.note_value() == "вторник:\nбассейн"
+        idx = (today - page.week_start).days
+        _header, txt, _col = page.day_widgets[idx]
+        text = txt.get("1.0", "end")
+        assert "первая запись" in text
+        assert "вторая запись" in text
     finally:
         storage.close()
         root.destroy()

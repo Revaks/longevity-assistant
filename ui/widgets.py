@@ -14,7 +14,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from .ollama import generative, list_models
+from .ollama import EMBED_PREFERENCE, embedding, generative, list_models
 
 UNAVAILABLE = "Ollama недоступна"
 
@@ -58,6 +58,9 @@ class ModelStore:
         self.current: str = ""
         self.status: str = ""
         self.busy: bool = False
+        #: Модели-эмбеддинги (не для генерации): ими считаются вектора книг.
+        self.embed_models: list = []
+        self.embed_model: str = ""
         self._subscribers = []
         self._thread = None  # ссылка нужна только тестам, чтобы дождаться потока
 
@@ -84,13 +87,13 @@ class ModelStore:
         self._notify()
 
         def work():
-            models = generative(list_models())
-            self._deliver(models)
+            all_models = list_models()
+            self._deliver(generative(all_models), embedding(all_models))
 
         self._thread = threading.Thread(target=work, daemon=True)
         self._thread.start()
 
-    def _deliver(self, models: list) -> None:
+    def _deliver(self, models: list, embed_models: list | None = None) -> None:
         """Выполняется в фоновом потоке — не должна бросать исключений наружу.
 
         Перехват узкий: после destroy() after() из чужого потока бросает
@@ -104,14 +107,23 @@ class ModelStore:
         на обеих вкладках сразу: store у них общий.
         """
         try:
-            self._root.after(0, lambda: self._apply(models))
+            self._root.after(0, lambda: self._apply(models, embed_models))
         except (RuntimeError, tk.TclError):
             self.busy = False
             self.status = ""
 
-    def _apply(self, models: list) -> None:
+    def _apply(self, models: list, embed_models: list | None = None) -> None:
         self.models = models
         self.busy = False
+        self.embed_models = list(embed_models or [])
+        self.embed_model = ""
+        if self.embed_models:
+            for name in EMBED_PREFERENCE:
+                if name in self.embed_models:
+                    self.embed_model = name
+                    break
+            if not self.embed_model:
+                self.embed_model = self.embed_models[0]
         if not models:
             self.current = ""
             self.status = "Ollama недоступна или нет подходящих моделей"

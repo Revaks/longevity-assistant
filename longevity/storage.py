@@ -2,10 +2,10 @@
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 #: Префикс для ключей настроек приложения.
 APP_PREFIX = "app."
@@ -54,6 +54,24 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector       TEXT NOT NULL,
     PRIMARY KEY (tip_id, model)
 );
+-- Дневник: несколько заметок на день. Таблица notes выше остаётся
+-- только как legacy-источник для переноса (см. sync_notes_to_diary).
+CREATE TABLE IF NOT EXISTS diary (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    date    TEXT NOT NULL,
+    created TEXT NOT NULL,
+    text    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diary_date ON diary(date);
+CREATE TABLE IF NOT EXISTS measurements (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    date    TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    value   REAL NOT NULL,
+    note    TEXT NOT NULL DEFAULT '',
+    created TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_measurements_kind ON measurements(kind, date);
 """
 
 
@@ -79,10 +97,25 @@ class Storage:
                     "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
                     (SCHEMA_VERSION,),
                 )
+            self._migrate_schema()
             self._check_schema_version(db_path)
         except BaseException:
             self._conn.close()
             raise
+
+    def _migrate_schema(self) -> None:
+        """Поднять номер схемы у баз старых версий без потери данных.
+
+        Таблицы добавляются через ``CREATE TABLE IF NOT EXISTS`` (см. SCHEMA),
+        а здесь только обновляется номер. Неизвестный номер не трогаем — его
+        отклонит _check_schema_version.
+        """
+        found = self.get_meta("schema_version")
+        try:
+            if int(found) < int(SCHEMA_VERSION):
+                self.set_meta("schema_version", SCHEMA_VERSION)
+        except (TypeError, ValueError):
+            pass
 
     def _check_schema_version(self, db_path: Path) -> None:
         """Отказ работать с базой из будущего: недостающих колонок не выдумать."""
@@ -128,6 +161,82 @@ class Storage:
         ).fetchall()
         return {row["date"]: row["text"] for row in rows}
 
+    # -- дневник (несколько заметок на день) ----------------------------
+    def diary_entries_on(self, date: str) -> list[dict]:
+        """Все заметки дня: [(id, date, created, text)] по времени создания."""
+        rows = self._conn.execute(
+            "SELECT id, date, created, text FROM diary WHERE date = ? "
+            "ORDER BY created, id", (date,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def diary_entries_in_range(self, start: str, end: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, date, created, text FROM diary "
+            "WHERE date BETWEEN ? AND ? ORDER BY date, created, id",
+            (start, end)).fetchall()
+        return [dict(row) for row in rows]
+
+    def has_diary_notes(self, date: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM diary WHERE date = ? LIMIT 1", (date,)).fetchone()
+        return row is not None
+
+    def add_diary(self, date: str, text: str) -> int:
+        """Новая заметка на день. Возвращает её id."""
+        text = text.strip()
+        if not text:
+            return 0
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO diary (date, created, text) VALUES (?, ?, ?)",
+                (date, created, text))
+        return cursor.lastrowid or 0
+
+    def update_diary(self, entry_id: int, text: str) -> bool:
+        text = text.strip()
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE diary SET text = ? WHERE id = ?", (text, entry_id))
+            return bool(cursor.rowcount)
+
+    def delete_diary(self, entry_id: int) -> bool:
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM diary WHERE id = ?", (entry_id,))
+            return bool(cursor.rowcount)
+
+    def sync_notes_to_diary(self) -> int:
+        """Перенести старые одиночные заметки (notes) в дневник.
+
+        Одна запись notes -> одна запись diary (дата/время переноса).
+        Старая строка удаляется — её копия уже в дневнике; повторный запуск
+        идемпотентен, дубликаты не создаются.
+        """
+        rows = self._conn.execute(
+            "SELECT date, text FROM notes ORDER BY date").fetchall()
+        moved = 0
+        with self._conn:
+            for row in rows:
+                date, text = row["date"], (row["text"] or "").strip()
+                if not text:
+                    continue
+                dup = self._conn.execute(
+                    "SELECT 1 FROM diary WHERE date = ? AND text = ? LIMIT 1",
+                    (date, text)).fetchone()
+                if dup:
+                    self._conn.execute(
+                        "DELETE FROM notes WHERE date = ?", (date,))
+                    continue
+                created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                self._conn.execute(
+                    "INSERT INTO diary (date, created, text) VALUES (?, ?, ?)",
+                    (date, created, text))
+                self._conn.execute(
+                    "DELETE FROM notes WHERE date = ?", (date,))
+                moved += 1
+        return moved
+
     # -- отметки выполнения --------------------------------------------
     def toggle_completion(self, date: str, item_id: str) -> bool:
         # Решение принимается одним изменяющим запросом (DELETE), а не парой
@@ -160,6 +269,45 @@ class Storage:
             (start, end),
         ).fetchall()
         return {row["item_id"]: row["n"] for row in rows}
+
+    # -- биодневник (измерения) -----------------------------------------
+    def add_measurement(self, kind: str, value: float, note: str = "",
+                        day: str | None = None) -> int:
+        """Добавить измерение; дата по умолчанию — сегодня. Возвращает id."""
+        if day is None:
+            day = date.today().isoformat()
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO measurements (date, kind, value, note, created) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (day, kind, value, note.strip(), created),
+            )
+        return cursor.lastrowid or 0
+
+    def measurements_of_kind(self, kind: str, limit: int = 30) -> list[dict]:
+        """Последние измерения вида, сначала свежие."""
+        rows = self._conn.execute(
+            "SELECT id, date, kind, value, note, created FROM measurements "
+            "WHERE kind = ? ORDER BY date DESC, id DESC LIMIT ?",
+            (kind, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def all_measurements(self, limit: int = 500) -> list[dict]:
+        """Все измерения (для выгрузки/удаления), свежие первыми."""
+        rows = self._conn.execute(
+            "SELECT id, date, kind, value, note, created FROM measurements "
+            "ORDER BY date DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_measurement(self, measurement_id: int) -> bool:
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM measurements WHERE id = ?", (measurement_id,))
+            return bool(cursor.rowcount)
 
     # -- настройки и профиль -------------------------------------------
     def get_value(self, key: str, default=None):
@@ -198,6 +346,66 @@ class Storage:
             except json.JSONDecodeError:
                 continue
         return result
+
+    # -- профиль календаря (типизированные доступы) ---------------------
+    def load_profile(self):
+        """Профиль календаря: возраст, пол, активность, разгрузка, скрытые пункты."""
+        from .plan import Profile, parse_hidden
+
+        age = self.get_value("user.age")
+        if isinstance(age, bool) or not isinstance(age, int):
+            age = None
+        sex = self.get_value("user.sex")
+        if not isinstance(sex, str):
+            sex = None
+        activity = self.get_value("user.activity")
+        if isinstance(activity, bool) or not isinstance(activity, int):
+            activity = 1
+        return Profile(
+            age=age,
+            sex=sex,
+            activity=activity,
+            deload=bool(self.get_value("user.deload")),
+            hidden=parse_hidden(self.get_value("user.hidden")),
+        )
+
+    def save_profile(self, profile) -> None:
+        """Сохранить профиль (скрытые пункты пишутся отдельно через save_hidden)."""
+        self.set_value("user.age", profile.age)
+        self.set_value("user.sex", profile.sex)
+        self.set_value("user.activity", profile.activity)
+        self.set_value("user.deload", profile.deload)
+
+    def load_custom_items(self, categories: list[str]):
+        from .plan import parse_custom_items
+
+        return parse_custom_items(self.get_value("user.custom"), categories)
+
+    def save_custom_items(self, items) -> None:
+        from .plan import serialize_custom_items
+
+        self.set_value("user.custom", serialize_custom_items(items))
+
+    def save_hidden(self, ids) -> None:
+        from .plan import serialize_hidden
+
+        self.set_value("user.hidden", serialize_hidden(ids))
+
+    def screening_last_done(self, screening_id: str):
+        """Дата последнего прохождения обследования (None — не проходили)."""
+        raw = self.get_value(f"user.screen.{screening_id}")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    def mark_screening(self, screening_id: str, day: date) -> None:
+        self.set_value(f"user.screen.{screening_id}", day.isoformat())
+
+    def clear_screening(self, screening_id: str) -> None:
+        self.set_value(f"user.screen.{screening_id}", None)
 
     def get_meta(self, key: str) -> str | None:
         row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()

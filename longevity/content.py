@@ -1,7 +1,7 @@
 """Загрузка данных приложения из JSON и проверка их целостности."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
 from typing import Any
@@ -41,10 +41,56 @@ class ScheduleItem:
 
 
 @dataclass(frozen=True)
+class RotationVariant:
+    """Вариант пункта расписания для ротации по неделям."""
+    level: int
+    title: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class FocusWeek:
+    """Тема недели («фокус») с заданиями."""
+    id: str
+    title: str
+    detail: str
+    tasks: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Screening:
+    """Профилактическое обследование с ориентировочной периодичностью."""
+    id: str
+    title: str
+    detail: str
+    period_months: int
+    age_min: int
+    sex: str | None
+
+
+@dataclass(frozen=True)
 class MindGroup:
     name: str
     amount: str
     note: str
+
+
+@dataclass(frozen=True)
+class Book:
+    id: str
+    title: str
+    subtitle: str
+    author: str
+
+
+@dataclass(frozen=True)
+class Passage:
+    """Отрывок книги — единица поиска по книгам и контекста RAG."""
+    id: str
+    book: str
+    section: str
+    text: str
+
 
 
 @dataclass(frozen=True)
@@ -70,6 +116,11 @@ class Content:
     categories: tuple[str, ...]
     cat_colors: dict[str, str]
     quick_questions: tuple[str, ...]
+    books: tuple[Book, ...] = ()
+    passages: tuple[Passage, ...] = ()
+    rotations: dict[str, tuple[RotationVariant, ...]] = field(default_factory=dict)
+    focus: tuple[FocusWeek, ...] = ()
+    screenings: tuple[Screening, ...] = ()
 
     def tip(self, tip_id: str) -> Tip:
         for tip in self.tips:
@@ -77,8 +128,20 @@ class Content:
                 return tip
         raise KeyError(tip_id)
 
+    def book(self, book_id: str) -> Book:
+        for book in self.books:
+            if book.id == book_id:
+                return book
+        raise KeyError(book_id)
+
+    def passage(self, passage_id: str) -> Passage:
+        for passage in self.passages:
+            if passage.id == passage_id:
+                return passage
+        raise KeyError(passage_id)
+
     @classmethod
-    def build(cls, tips, schedule, synonyms, mind, meta) -> "Content":
+    def build(cls, tips, schedule, synonyms, mind, meta, books=None, extras=None) -> "Content":
         categories = tuple(_field(meta, "categories", "list", "meta.json"))
         tip_objects = tuple(_build_tip(t, i) for i, t in enumerate(_records(tips, "tips.json"), 1))
         _check_tips(tip_objects, categories)
@@ -91,6 +154,14 @@ class Content:
         if not isinstance(synonyms, dict):
             raise ContentError(
                 f"synonyms.json: ожидался объект, получено {type(synonyms).__name__}")
+
+        if books is None:
+            book_objects, passage_objects = (), ()
+        else:
+            book_objects, passage_objects = _build_books(books)
+
+        rotations, focus, screenings = _build_extras(
+            extras, {item.id for item in item_objects})
 
         return cls(
             tips=tip_objects,
@@ -114,6 +185,11 @@ class Content:
             categories=categories,
             cat_colors=dict(_field(meta, "cat_colors", "dict", "meta.json")),
             quick_questions=tuple(_field(meta, "quick_questions", "list", "meta.json")),
+            books=book_objects,
+            passages=passage_objects,
+            rotations=rotations,
+            focus=focus,
+            screenings=screenings,
         )
 
 
@@ -222,6 +298,147 @@ def _build_menu_day(row, index: int) -> MenuDay:
     )
 
 
+def _build_books(raw) -> tuple[tuple[Book, ...], tuple[Passage, ...]]:
+    """Разбор books.json: книги и отрывки с проверкой ссылок.
+
+    Поломанный или противоречивый файл останавливает запуск так же, как
+    повреждённые советы: тихо «не те» отрывки хуже явной ошибки.
+    """
+    if not isinstance(raw, dict):
+        raise ContentError(f"books.json: ожидался объект, получено {type(raw).__name__}")
+    book_rows = _records(_field(raw, "books", "list", "books.json"), "books.json")
+    passage_rows = _records(_field(raw, "passages", "list", "books.json"), "books.json")
+
+    books: list[Book] = []
+    seen_ids: set[str] = set()
+    for i, row in enumerate(book_rows, 1):
+        where = _where(row, i, "книга")
+        book = Book(
+            id=_field(row, "id", "str", where),
+            title=_field(row, "title", "str", where),
+            subtitle=_field(row, "subtitle", "str", where),
+            author=_field(row, "author", "str", where),
+        )
+        if book.id in seen_ids:
+            raise ContentError(f"books.json: дублирующийся id книги: {book.id}")
+        if not book.title.strip():
+            raise ContentError(f"{where}: пустое название")
+        seen_ids.add(book.id)
+        books.append(book)
+
+    book_ids = set(seen_ids)
+    passages: list[Passage] = []
+    seen: set[str] = set()
+    for i, row in enumerate(passage_rows, 1):
+        where = _where(row, i, "отрывок")
+        passage = Passage(
+            id=_field(row, "id", "str", where),
+            book=_field(row, "book", "str", where),
+            section=_field(row, "section", "str", where),
+            text=_field(row, "text", "str", where),
+        )
+        if passage.id in seen:
+            raise ContentError(f"books.json: дублирующийся id отрывка: {passage.id}")
+        if passage.book not in book_ids:
+            raise ContentError(
+                f"{where}: ссылка на несуществующую книгу {passage.book!r}")
+        if not passage.text.strip():
+            raise ContentError(f"{where}: пустой текст отрывка")
+        seen.add(passage.id)
+        passages.append(passage)
+    return tuple(books), tuple(passages)
+
+
+def _build_extras(raw, schedule_ids: set[str]):
+    """Разбор extras.json: ротация пунктов, фокусы недель, обследования.
+
+    Возвращает (rotations, focus, screenings). Отсутствующий файл (raw is None)
+    даёт пустые наборы — без extras календарь работает, просто без ротации.
+    """
+    if raw is None:
+        return {}, (), ()
+    if not isinstance(raw, dict):
+        raise ContentError(f"extras.json: ожидался объект, получено {type(raw).__name__}")
+
+    rotations: dict[str, tuple[RotationVariant, ...]] = {}
+    for i, row in enumerate(_records(_field(raw, "rotations", "list", "extras.json"), "extras.json"), 1):
+        where = _where(row, i, "ротация")
+        item_id = _field(row, "item_id", "str", where)
+        if item_id not in schedule_ids:
+            raise ContentError(f"{where}: ссылка на несуществующий пункт расписания {item_id!r}")
+        variants: list[RotationVariant] = []
+        for vi, v in enumerate(_records(_field(row, "variants", "list", where), where), 1):
+            vw = f"{where}, вариант №{vi}"
+            level = _field(v, "level", "int?", vw)
+            if level is None:
+                level = 0
+            if isinstance(level, bool) or not 0 <= level <= 2:
+                raise ContentError(f"{vw}: level должен быть 0..2")
+            variants.append(RotationVariant(
+                level=level,
+                title=_field(v, "title", "str", vw),
+                detail=_field(v, "detail", "str", vw),
+            ))
+        if not variants:
+            raise ContentError(f"{where}: нет ни одного варианта")
+        rotations[item_id] = tuple(variants)
+
+    focus: list[FocusWeek] = []
+    seen_focus: set[str] = set()
+    for i, row in enumerate(_records(_field(raw, "focus", "list", "extras.json"), "extras.json"), 1):
+        where = _where(row, i, "фокус недели")
+        tasks_raw = _records(_field(row, "tasks", "list", where), where)
+        tasks: list[str] = []
+        for ti, task in enumerate(tasks_raw, 1):
+            if not isinstance(task, str):
+                raise ContentError(f"{where}: задание №{ti} должно быть строкой")
+            tasks.append(task)
+        if not tasks:
+            raise ContentError(f"{where}: нет заданий")
+        fw = FocusWeek(
+            id=_field(row, "id", "str", where),
+            title=_field(row, "title", "str", where),
+            detail=_field(row, "detail", "str", where),
+            tasks=tuple(tasks),
+        )
+        if fw.id in seen_focus:
+            raise ContentError(f"extras.json: дублирующийся id фокуса: {fw.id}")
+        seen_focus.add(fw.id)
+        focus.append(fw)
+
+    screenings: list[Screening] = []
+    seen_screen: set[str] = set()
+    for i, row in enumerate(_records(_field(raw, "screenings", "list", "extras.json"), "extras.json"), 1):
+        where = _where(row, i, "обследование")
+        sex = _field(row, "sex", "str?", where)
+        if sex is not None and sex not in ("м", "ж"):
+            raise ContentError(f"{where}: пол должен быть 'м', 'ж' или отсутствовать")
+        period = _field(row, "period_months", "int?", where)
+        if period is None:
+            period = 12
+        if isinstance(period, bool) or period <= 0:
+            raise ContentError(f"{where}: period_months должен быть больше нуля")
+        age_min = _field(row, "age_min", "int?", where)
+        if age_min is None:
+            age_min = 18
+        if isinstance(age_min, bool) or age_min < 0:
+            raise ContentError(f"{where}: age_min не может быть отрицательным")
+        sc = Screening(
+            id=_field(row, "id", "str", where),
+            title=_field(row, "title", "str", where),
+            detail=_field(row, "detail", "str", where),
+            period_months=period,
+            age_min=age_min,
+            sex=sex,
+        )
+        if sc.id in seen_screen:
+            raise ContentError(f"extras.json: дублирующийся id обследования: {sc.id}")
+        seen_screen.add(sc.id)
+        screenings.append(sc)
+
+    return rotations, tuple(focus), tuple(screenings)
+
+
 def _check_tips(tips: tuple[Tip, ...], categories: tuple[str, ...]) -> None:
     seen: set[str] = set()
     for tip in tips:
@@ -271,4 +488,6 @@ def load_content() -> Content:
         synonyms=_read("synonyms.json"),
         mind=_read("mind.json"),
         meta=_read("meta.json"),
+        books=_read("books.json"),
+        extras=_read("extras.json"),
     )

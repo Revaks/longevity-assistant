@@ -11,6 +11,7 @@ from longevity.text import analyze, tokenize
 
 from .app import WEEKDAYS, WEEKDAYS_FULL
 from .calendar_page import CalendarPage
+from .formatting import passage_reference, truncate_passage
 from .ollama import ask_ollama
 from .widgets import ModelBar
 
@@ -53,6 +54,10 @@ class AssistantPage(ttk.Frame):
         # send_question сам её подхватит через self.model_bar.current().
         self.use_ollama_var = tk.BooleanVar(value=True)
         self._busy = False
+        # Ретривер есть у реального приложения; в тестах страницы его нет —
+        # тогда отрывки книг ищет локальный BM25-индекс (см. _book_hits).
+        self._retriever = getattr(app, "retriever", None)
+        self._local_book_search = None
         self._build()
         self._greet()
 
@@ -112,10 +117,10 @@ class AssistantPage(ttk.Frame):
         self.ask_button.pack(side="right")
 
     def _greet(self):
-        text = ("Здравствуйте! Я — ассистент по книге Алексея Москалева "
-                "«120 лет жизни — только начало».\n"
-                "Спросите меня про питание, сон, спорт, добавки, анализы или "
-                "попросите план на день.\n")
+        text = ("Здравствуйте! Я — ассистент по книгам Алексея Москалева: "
+                "«120 лет жизни», «Мозг долгожителя» и «Кишечник долгожителя».\n"
+                "Спросите меня про питание, сон, спорт, добавки, мозг или "
+                "кишечник — отвечу по книгам или найду ответ в них.\n")
         self._append("Ассистент", text, is_user=False)
 
     def _append(self, who: str, text: str, is_user: bool):
@@ -175,20 +180,29 @@ class AssistantPage(ttk.Frame):
     def _answer_ollama_async(self, query: str):
         model = self.model_bar.current()
         self._lock_input()
-        # Синхронный участок до старта потока тоже может упасть (например,
-        # сборка промпта или поиск по индексу внутри неё) — если это
-        # произойдёт, поток так и не запустится и разблокировать ввод
-        # будет некому, кроме нас самих здесь.
+        # Базовый промпт собирается синхронно (BM25, без сети): если он
+        # упадёт, поток не запустится вовсе и разблокировать ввод должен
+        # именно этот вызов — иначе интерфейс останется запертым.
         try:
             self.thinking_status.config(text="Думаю...")
             self._append_pending("Ассистент: Думаю (Ollama, может занять 10–60 сек)...")
-            prompt = self._build_ollama_prompt(query)
+            prompt = self._build_ollama_prompt(query)  # BM25, без сети
         except Exception:
             self._unlock_input()
             raise
 
         def work():
-            result = self._ollama_answer_or_fallback(model, prompt, query)
+            # Векторный ретрив требует сети (эмбеддинг запроса) — делаем его
+            # в фоне и тихо откатываемся на BM25-промпт при любом сбое.
+            prompt_text = prompt
+            try:
+                prompt_text = self._build_ollama_prompt(query, prefer_vector=True)
+            except Exception:
+                pass
+            try:
+                result = self._ollama_answer_or_fallback(model, prompt_text, query)
+            except Exception as exc:
+                result = f"Не удалось получить ответ: {exc}"
             self._deliver(result)
 
         threading.Thread(target=work, daemon=True).start()
@@ -247,7 +261,12 @@ class AssistantPage(ttk.Frame):
         return bool(set(analyze(query)) & NUTRITION_STEMS
                     or set(tokenize(query)) & NUTRITION_WORDS)
 
-    def _build_ollama_prompt(self, query: str) -> str:
+    def _build_ollama_prompt(self, query: str, prefer_vector: bool = False) -> str:
+        """Промпт для Ollama: расписание/советы + релевантные отрывки книг.
+
+        prefer_vector=True вызывает сеть (эмбеддинг запроса), поэтому этот
+        режим используется только из фонового потока; иначе — BM25.
+        """
         terms = set(analyze(query))
         parts = []
         if terms & PLAN_STEMS:
@@ -263,19 +282,42 @@ class AssistantPage(ttk.Frame):
                             for g in self.app.content.mind_limit)
             parts.append("Правила диеты MIND (полезные группы):\n" + good +
                          "\nОграничить:\n" + bad)
+
+        # Отрывки книг: BM25 или векторный поиск (когда кэш готов).
+        content = self.app.content
+        book_hits = self._book_hits(query, prefer_vector=prefer_vector, limit=4)
+        for hit in book_hits:
+            passage = hit.passage
+            src = passage_reference(passage, content)
+            parts.append(f"- Из книги {src}: "
+                         f"{truncate_passage(passage.text)}")
+
         context = "\n".join(parts) if parts else "Контекст не найден."
+        book_names = "», «".join(b.title for b in content.books) if content.books else "«120 лет жизни»"
         return (
-            "Ты — «Ассистент долголетия», помощник по книге Алексея Москалева "
-            "«120 лет жизни — только начало» и диете MIND. Отвечай на русском языке, "
-            "кратко и по делу, с опорой на приведённый контекст. Если в контексте нет "
-            "ответа — честно скажи, что этого нет в книге. Не выдумывай исследования "
-            "и не давай медицинских назначений; напоминай, что лекарства и добавки — "
-            "только по назначению врача.\n\n"
-            "КОНТЕКСТ (советы из книги):\n" + context + "\n\n"
+            "Ты — «Ассистент долголетия», помощник по книгам Алексея Москалева: "
+            f"«{book_names}», а также по диете MIND. Отвечай на русском языке, "
+            "кратко и по делу, с опорой на приведённый контекст. Если отвечаешь "
+            "по отрывку из книги, назови книгу и раздел. Если в контексте нет "
+            "ответа — честно скажи, что этого нет в книгах. Не выдумывай "
+            "исследования и не давай медицинских назначений; напоминай, что "
+            "лекарства и добавки — только по назначению врача.\n\n"
+            "КОНТЕКСТ (советы и отрывки из книг):\n" + context + "\n\n"
             "ВОПРОС ПОЛЬЗОВАТЕЛЯ: " + query
         )
 
     # -- логика ответов ------------------------------------------------
+    def _book_hits(self, query: str, prefer_vector: bool, limit: int):
+        """Отрывки книг по запросу. В тестах страницы retriever'а нет —
+        тогда работает локальный BM25-индекс поверх контента."""
+        if self._retriever is not None:
+            return self._retriever.search(query, limit=limit,
+                                          prefer_vector=prefer_vector)
+        if self._local_book_search is None:
+            from longevity.search import BookSearch
+            self._local_book_search = BookSearch(self.app.content).search
+        return self._local_book_search(query, limit)
+
     def _answer(self, query: str) -> str:
         terms = set(analyze(query))
 
@@ -291,8 +333,25 @@ class AssistantPage(ttk.Frame):
 
         tips = [hit.tip for hit in self.app.index.search(query, limit=4)]
         if not tips:
+            # Советы не нашли — ищем в полных текстах книг (BM25, офлайн).
+            hits = self._book_hits(query, prefer_vector=False, limit=2)
+            if hits:
+                return self._format_book_excerpts(hits)
             return self._fallback()
         return self._format_tips(tips)
+
+    def _format_book_excerpts(self, hits) -> str:
+        """Офлайн-ответ цитатами из книг, когда в советах ответа нет."""
+        content = self.app.content
+        lines = ["Вот что пишет А. А. Москалев в книгах:\n"]
+        for i, hit in enumerate(hits, 1):
+            passage = hit.passage
+            src = passage_reference(passage, content)
+            lines.append(f"{i}. Источник: {src}")
+            lines.append(f"   {truncate_passage(passage.text)}\n")
+        lines.append("Подробнее — вкладка «База знаний», раздел «Книги». "
+                     "Лекарства и добавки — только по назначению врача.")
+        return "\n".join(lines)
 
     def _day_plan(self, day: dt.date) -> str:
         items = get_today_plan(self.app.content, day)

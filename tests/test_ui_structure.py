@@ -13,7 +13,8 @@ def test_app_py_is_a_thin_wrapper():
 
 
 def test_every_page_has_its_own_module():
-    for name in ("calendar_page", "knowledge_page", "nutrition_page", "assistant_page"):
+    for name in ("calendar_page", "activity_page", "notes_page",
+                 "knowledge_page", "nutrition_page", "assistant_page"):
         assert (ROOT / "ui" / f"{name}.py").is_file(), f"нет модуля ui/{name}.py"
 
 
