@@ -6,3 +6,6 @@ notes.json*
 # сгенерированный longevity/data/books.json (см. tools/build_book_index.py).
 *.mobi
 .venv/
+# PyInstaller: временные файлы сборки и готовые исполняемые файлы
+build/
+dist/

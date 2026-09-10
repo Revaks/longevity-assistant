@@ -56,6 +56,26 @@ python3 app.py
 longevity-assistant
 ```
 
+## Windows и сборка исполняемого файла
+
+Приложение не использует ничего кроме стандартной библиотеки, поэтому на
+Windows оно работает так же, как на Linux/macOS: установите Python (Tk входит
+в официальный установщик с python.org) и запустите `python app.py` или
+`longevity-assistant` из консоли. Данные пользователя на Windows лежат в
+`%LOCALAPPDATA%\longevity-assistant`.
+
+Для автономного `.exe` без установленного Python есть PyInstaller-сборка
+(`desktop.spec`):
+
+```bash
+pip install pyinstaller .
+pyinstaller --noconfirm --clean desktop.spec
+# dist/longevity-assistant.exe (Windows) или dist/longevity-assistant (Linux/macOS)
+```
+
+Готовый Windows-исполняемый файл собирается и прикрепляется к релизу
+автоматически (`.github/workflows/windows-build.yml`, по тегу `v*`).
+
 ## Ollama — по желанию
 
 Ассистент и генерация недельного меню работают лучше при запущенной
